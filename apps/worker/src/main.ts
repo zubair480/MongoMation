@@ -8,8 +8,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { col, connect } from "./db/index.ts";
 import { currentConfig } from "./harness/config.ts";
 import { claimNext, heartbeat, HEARTBEAT_MS, pendingCommand, recoverStale, setStatus, workerBeat, workerId, type JobDoc } from "./harness/jobs.ts";
+import { commandArrived, jobArrived, watchJobs } from "./harness/jobwatch.ts";
 import { BlockedError, event } from "./harness/stages.ts";
-import { runEngineering, newProjectId } from "./pipeline/engineer.ts";
+import { runEngineering, newProjectId, redactRigHost } from "./pipeline/engineer.ts";
 import { runFaultAndImprove } from "./pipeline/fault.ts";
 import { runEvolveRound, runBenchmarkJob, runAblationJob } from "./rsi/evolve.ts";
 import { initTelemetry, telemetry } from "./telemetry/index.ts";
@@ -73,9 +74,10 @@ void (async () => {
       log("INTERRUPT requested from the dashboard: exiting now without cleanup (simulated crash)");
       process.exit(137);
     }
-    await sleep(1000);
+    await commandArrived.wait(1000); // change stream wakes this at once; 1 s poll is the fallback
   }
 })();
+watchJobs(log);
 
 // --- job loop ---------------------------------------------------------------------------------------------
 for (;;) {
@@ -84,7 +86,7 @@ for (;;) {
   const raw = await claimNext();
   if (!raw) {
     await workerBeat(null).catch(() => {});
-    await sleep(1500);
+    await jobArrived.wait(1500); // woken by the jobs change stream on insert; 1.5 s poll is the fallback
     continue;
   }
   const job = raw as unknown as JobDoc;
@@ -96,10 +98,16 @@ for (;;) {
     await setStatus(job._id, "completed", { result });
     log(`completed ${job.type} ${jobId}`);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = redactRigHost(err instanceof Error ? err.message : String(err));
     const blocked = err instanceof BlockedError;
     await setStatus(job._id, blocked ? "blocked" : "failed", { error: message });
-    if (job.projectId) await event(job.projectId, jobId, null, "error", `${blocked ? "BLOCKED" : "FAILED"}: ${message}`);
+    // The engineer job may have created the project after claim, so re-read the job's projectId.
+    const projectId = job.projectId ?? ((await col.jobs().findOne({ _id: job._id }, { projection: { projectId: 1 } }))?.projectId as string | undefined);
+    if (projectId) {
+      // Only a project this job left "running" (ended before the verification stage) is closed out here.
+      await col.projects().updateOne({ _id: projectId as never, status: "running" }, { $set: { status: blocked ? "blocked" : "failed", error: message } }).catch(() => {});
+      await event(projectId, jobId, null, "error", `${blocked ? "BLOCKED" : "FAILED"}: ${message}`);
+    }
     log(`${blocked ? "blocked" : "failed"} ${job.type} ${jobId}: ${message}`);
   } finally {
     clearInterval(beat);

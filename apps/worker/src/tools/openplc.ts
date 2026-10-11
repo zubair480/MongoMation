@@ -42,9 +42,10 @@ export class OpenPlcRest implements PlcRuntime {
   private token: string | null = null;
   private lastGoodBundle: Uint8Array | null = null;
   private readonly dispatcher?: Agent;
+  private readonly base: string;
 
   constructor(
-    private readonly base: string,
+    base: string,
     private readonly user: string,
     private readonly password: string,
     private readonly flavor: "v3" | "v4",
@@ -52,7 +53,11 @@ export class OpenPlcRest implements PlcRuntime {
     private readonly modbus?: { scene: () => SceneDefinition | null; host: string; port: number; slaveId: number },
     insecureTls = false,
     private readonly v4: V4Options = { modbusMode: "master", builder: "strucpp", relinkMs: 0 },
+    /** Team gateway key (TEAM_API_KEY): sent as X-Team-Key on EVERY request, login included. Never logged. */
+    private readonly teamKey?: string,
   ) {
+    // Gateway URLs are path-prefixed (https://<gw>/openplc): keep the prefix, drop trailing slashes so paths join cleanly.
+    this.base = base.replace(/\/+$/, "");
     this.label = `OpenPLC ${flavor} REST @ ${base}`;
     // The runtime ships a self-signed certificate. Inside the VPC you may skip verification explicitly.
     if (insecureTls) this.dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
@@ -60,6 +65,7 @@ export class OpenPlcRest implements PlcRuntime {
 
   private async raw(method: string, path: string, init: { body?: BodyInit; headers?: Record<string, string> } = {}, auth = true): Promise<Response> {
     const headers: Record<string, string> = { ...(init.headers ?? {}) };
+    if (this.teamKey) headers["x-team-key"] = this.teamKey;
     if (auth) headers.authorization = `Bearer ${await this.login()}`;
     const res = await fetch(`${this.base}${path}`, { method, body: init.body, headers, signal: AbortSignal.timeout(60_000), ...(this.dispatcher && { dispatcher: this.dispatcher }) } as RequestInit);
     if (res.status === 401 && auth) {
@@ -130,7 +136,12 @@ export class OpenPlcRest implements PlcRuntime {
     if (result.debugMap !== undefined) files["debug-map.json"] = strToU8(JSON.stringify(result.debugMap));
     const inc = join(root, "src", "runtime", "include");
     for (const f of readdirSync(inc)) files[`strucpp_runtime/include/${f}`] = readFileSync(join(inc, f));
-    if (this.v4.modbusMode === "server") return zipSync(files);
+    if (this.v4.modbusMode === "server") {
+      // Server mode: Factory I/O is the Modbus client. The rig's own builder (verified on the live rig) ships this
+      // slave config in every program.zip; without it an upload may reset the Modbus server and drop the link.
+      files["conf/modbus_slave.json"] = strToU8(JSON.stringify(MODBUS_SLAVE_CONFIG, null, 2));
+      return zipSync(files);
+    }
     // Master mode: every upload replaces the plugin config; without conf/modbus_master.json the PLC loses its Factory I/O link.
     const scene = this.modbus?.scene();
     if (!scene || !this.modbus) throw new Error("v4 upload needs the scene + FACTORYIO_MODBUS_HOST to generate conf/modbus_master.json");
@@ -223,6 +234,17 @@ export class OpenPlcRest implements PlcRuntime {
 }
 
 class CompileRejected extends Error {}
+
+/** conf/modbus_slave.json for server mode — identical to the rig builder's file (port 502, full IEC buffers). */
+export const MODBUS_SLAVE_CONFIG = {
+  network_configuration: { host: "0.0.0.0", port: 502 },
+  buffer_mapping: {
+    holding_registers: { qw_count: 1024, mw_count: 1024, md_count: 1024, ml_count: 1024 },
+    coils: { qx_bits: 8192, mx_bits: 0 },
+    discrete_inputs: { ix_bits: 8192 },
+    input_registers: { iw_count: 1024 },
+  },
+};
 
 /** conf/modbus_master.json for OpenPLC v4 from the scene's verified address map (contiguous blocks from 0). */
 export function modbusMasterConfig(scene: SceneDefinition, mb: { host: string; port: number; slaveId: number }) {

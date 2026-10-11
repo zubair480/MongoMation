@@ -167,7 +167,10 @@ export async function runEngineering(input: EngineerInput, deps: EngineerDeps): 
       const doneRun = await completedStage<SimRunSummary>(ctx, "simulate", attempt, { sourceHash, plan: plan.hash });
       const outcome = doneRun ? { kind: "tested" as const, run: doneRun } : await withRig(deps.rigId, jobId, async () => {
         const comp = await runStage(ctx, "compile", attempt, { sourceHash, boot: BOOT_ID }, async () => {
-          const r = await deps.plc.compile(source, `mm_${projectId.slice(-6)}_v${attempt + 1}`);
+          const r = await deps.plc.compile(source, `mm_${projectId.slice(-6)}_v${attempt + 1}`).catch((e: unknown) => {
+            // Only a dead/unreachable rig is BLOCKED; STruC++ rejections and OpenPLC build FAILED come back as ok:false.
+            throw rigUnreachable(e) ? new BlockedError(`rig unreachable at OpenPLC upload: ${redactRigHost((e as Error).message)}`) : e;
+          });
           const doc = await col.compiles().insertOne({ plcVersionId, stage: "compile", toolchain: deps.plc.label, ...r, createdAt: new Date() });
           const traceId = telemetry.tool({ name: "openplc_compile", runId: projectId, input: { sourceHash } }, { ok: r.ok, summary: r.ok ? "compiled" : r.log.slice(-300), durationMs: r.durationMs, evidenceIds: [String(doc.insertedId)] });
           if (!r.ok) telemetry.signal({ runId: projectId, name: "plc_compile_failed", eventId: traceId });
@@ -283,3 +286,22 @@ async function verifyLessons(projectId: string) {
 }
 
 export const newProjectId = () => new ObjectId().toHexString();
+
+/** Stored errors are shown on the public dashboard: never echo the rig's URL or IP/host:port. */
+export function redactRigHost(text: string): string {
+  return text.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s/'")]+/gi, "<rig>").replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, "<rig>");
+}
+
+/** Network/timeout/login-transport failures talking to the rig (not compile verdicts). */
+function rigUnreachable(e: unknown): boolean {
+  const err = e as { name?: string; message?: string; code?: string; cause?: { code?: string; name?: string } };
+  const codes = /ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|ECONNRESET|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET/;
+  return (
+    err?.name === "AbortError" ||
+    err?.name === "TimeoutError" ||
+    err?.cause?.name === "ConnectTimeoutError" ||
+    codes.test(String(err?.code ?? "")) ||
+    codes.test(String(err?.cause?.code ?? "")) ||
+    /fetch failed|rig unreachable|OpenPLC login failed/.test(String(err?.message ?? ""))
+  );
+}

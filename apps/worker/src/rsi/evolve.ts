@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { BoundRequirement, HarnessConfig, HarnessScores, SceneDefinition } from "@mongomation/types";
 import { ObjectId } from "mongodb";
-import { col } from "../db/index.ts";
+import { col, withTxn } from "../db/index.ts";
 import { currentConfig, getConfig, recordVerdict, storeCandidate } from "../harness/config.ts";
 import { enqueue } from "../harness/jobs.ts";
 import { newProjectId, runEngineering, type EngineerResult } from "../pipeline/engineer.ts";
@@ -87,11 +87,17 @@ export async function runEvolveRound(args: { jobId: string; config: HarnessConfi
     telemetry.signal({ runId: `rsi-${args.jobId}`, name: "harness_proposal_rejected", eventId: meta.traceId, properties: { violations: violations.join("; ") } });
     return { verdict: "rejected" as const, proposalId: String(doc.insertedId), violations };
   }
-  const candidate = await storeCandidate(parent, p.config as never, p.rationale, { runIds: cited, testResultIds: repeated.flatMap((c) => c.testResultIds).slice(0, 50), raindropEventIds: repeated.flatMap((c) => c.raindropEventIds).slice(0, 50) });
-  const benchmarkJobId = await enqueue({ type: "benchmark", origin: "script" });
-  await col.jobs().updateOne({ _id: benchmarkJobId }, { $set: { candidateVersion: candidate.version } });
-  const doc = await col.proposals().insertOne({ ...base, change: true, verdict: "pending", candidateVersion: candidate.version, rationale: p.rationale, expectedEffect: p.expectedEffect, citedRunIds: cited, diff, guardrailViolations: [], metaTraceId: meta.traceId, benchmarkJobId: String(benchmarkJobId), provenance: "live" });
-  return { verdict: "pending" as const, proposalId: String(doc.insertedId), candidateVersion: candidate.version, diff, benchmarkJobId: String(benchmarkJobId) };
+  const evidenceRefs = { runIds: cited, testResultIds: repeated.flatMap((c) => c.testResultIds).slice(0, 50), raindropEventIds: repeated.flatMap((c) => c.raindropEventIds).slice(0, 50) };
+  // ONE transaction: the pending harness version, the benchmark job that will judge it and the proposal linking
+  // them commit together or not at all. A crash can no longer leave a "pending" version with no benchmark job, and
+  // a worker woken by the jobs change stream never sees the benchmark job before its candidate exists.
+  const { candidate, benchmarkJobId, proposalId } = await withTxn(async (session) => {
+    const candidate = await storeCandidate(parent, p.config as never, p.rationale, evidenceRefs, session);
+    const benchmarkJobId = await enqueue({ type: "benchmark", origin: "script" }, { candidateVersion: candidate.version }, session);
+    const doc = await col.proposals().insertOne({ ...base, change: true, verdict: "pending", candidateVersion: candidate.version, rationale: p.rationale, expectedEffect: p.expectedEffect, citedRunIds: cited, diff, guardrailViolations: [], metaTraceId: meta.traceId, benchmarkJobId: String(benchmarkJobId), provenance: "live" }, { session });
+    return { candidate, benchmarkJobId, proposalId: String(doc.insertedId) };
+  });
+  return { verdict: "pending" as const, proposalId, candidateVersion: candidate.version, diff, benchmarkJobId: String(benchmarkJobId) };
 }
 
 // --------------------------------------------------------------------------------------------------------
@@ -177,8 +183,12 @@ export async function runBenchmarkJob(
   if (!candidate) return { manifestHash: hash, parentScores };
   const candidateScores = score(rows.candidate);
   const d = decide(candidateScores, parentScores);
-  await recordVerdict(candidate.version, { verdict: d.verdict, scores: candidateScores, parentScores, gateNote: d.reasons.join("; ") });
-  await col.proposals().updateOne({ candidateVersion: candidate.version }, { $set: { verdict: d.verdict, scores: candidateScores, parentScores, gateNote: d.reasons.join("; "), decidedAt: new Date(), manifestHash: hash } });
+  // ONE transaction: the harness version's verdict (which decides what currentConfig() returns, i.e. which harness
+  // every later job runs) and the proposal's verdict shown on the dashboard can never disagree.
+  await withTxn(async (session) => {
+    await recordVerdict(candidate.version, { verdict: d.verdict, scores: candidateScores, parentScores, gateNote: d.reasons.join("; ") }, session);
+    await col.proposals().updateOne({ candidateVersion: candidate.version }, { $set: { verdict: d.verdict, scores: candidateScores, parentScores, gateNote: d.reasons.join("; "), decidedAt: new Date(), manifestHash: hash } }, { session });
+  });
   telemetry.signal({ runId: `benchmark-${args.jobId}`, name: d.verdict === "kept" ? "harness_change_kept" : "harness_change_rolled_back", properties: { version: candidate.version } });
   return { manifestHash: hash, verdict: d.verdict, reasons: d.reasons, parentScores, candidateScores };
 }

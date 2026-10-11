@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Agent } from "undici";
+import { fioRequest } from "../apps/worker/src/tools/factoryio.ts";
 
 const TIMEOUT_MS = 20_000; // the rig API is slow (~0.3-1 s per call, more under load)
 const SCENE_FILE = join(process.cwd(), "scenes", "sorting-by-height-basic.json");
@@ -36,6 +37,10 @@ const plcUser = process.env.OPENPLC_USER ?? "";
 const plcPass = process.env.OPENPLC_PASSWORD ?? "";
 const insecure = process.env.OPENPLC_INSECURE_TLS === "true";
 const dispatcher = insecure ? new Agent({ connect: { rejectUnauthorized: false } }) : undefined;
+// Team gateway: X-Team-Key on every OpenPLC + Factory I/O request (value never printed).
+const teamKey = process.env.TEAM_API_KEY || undefined;
+const gw: Record<string, string> = teamKey ? { "x-team-key": teamKey } : {};
+info(`team key ${teamKey ? "set" : "empty"} (X-Team-Key ${teamKey ? "sent" : "not sent"})`);
 
 if (!plcUrl || !plcUser || !plcPass) {
   row(false, "openplc env", `missing ${[!plcUrl && "OPENPLC_URL", !plcUser && "OPENPLC_USER", !plcPass && "OPENPLC_PASSWORD"].filter(Boolean).join(", ")}`);
@@ -45,7 +50,7 @@ if (!plcUrl || !plcUser || !plcPass) {
   try {
     const r = await getText(`${plcUrl}/api/login`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...gw },
       body: JSON.stringify({ username: plcUser, password: plcPass }),
       ...(dispatcher && { dispatcher }),
     });
@@ -58,7 +63,7 @@ if (!plcUrl || !plcUser || !plcPass) {
     row(false, "openplc login", why(err));
   }
   if (token) {
-    const auth = { authorization: `Bearer ${token}` };
+    const auth = { authorization: `Bearer ${token}`, ...gw };
     for (const [name, path, expect] of [
       ["openplc ping", "/api/ping", /PING:OK/],
       ["openplc status", "/api/status", /STATUS:/],
@@ -81,6 +86,13 @@ interface FioTag { name: string; id: string; type: string; kind: string; value: 
 interface SceneTag { name: string; role: string; fioKind?: string; webApiId?: string }
 
 const fioUrl = (process.env.FACTORYIO_URL ?? "").replace(/\/+$/, "");
+const fioHost = process.env.FACTORYIO_HOST_HEADER || undefined;
+const fioInsecure = process.env.FACTORYIO_INSECURE_TLS === "true";
+/** Factory I/O GET via node:http (fetch drops a custom Host header). */
+async function fioGet(path: string) {
+  const r = await fioRequest(fioUrl, "GET", path, { timeoutMs: TIMEOUT_MS, hostHeader: fioHost, teamKey, insecureTls: fioInsecure });
+  return { status: r.status, ok: r.status >= 200 && r.status < 300, text: r.text };
+}
 let sceneTags: SceneTag[] = [];
 try {
   sceneTags = (JSON.parse(readFileSync(SCENE_FILE, "utf8")) as { tags: SceneTag[] }).tags;
@@ -92,9 +104,9 @@ let rigTags: FioTag[] | null = null;
 if (!fioUrl) {
   row(false, "factoryio env", "missing FACTORYIO_URL");
 } else {
-  info(`Factory I/O @ ${fioUrl}`);
+  info(`Factory I/O @ ${fioUrl}${fioHost ? ` (Host: ${fioHost})` : ""} (insecure TLS ${fioInsecure})`);
   try {
-    const r = await getText(`${fioUrl}/api/tags`);
+    const r = await fioGet("/api/tags");
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.text.slice(0, 200)}`);
     const parsed = JSON.parse(r.text) as unknown;
     if (!Array.isArray(parsed)) throw new Error(`expected an array, got ${r.text.slice(0, 120)}`);
@@ -138,7 +150,7 @@ if (!fioUrl) {
 // ------------------------------------------------------------------------------------------------
 if (rigTags && sceneTags.length) {
   try {
-    const r = await getText(`${fioUrl}/api/tag/values`);
+    const r = await fioGet("/api/tag/values");
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.text.slice(0, 200)}`);
     const values = JSON.parse(r.text) as { id: string; value: unknown; error?: string; code?: number }[];
     const errs = values.filter((v) => v?.error);

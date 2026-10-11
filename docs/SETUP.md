@@ -32,6 +32,35 @@ npm run green               # ✓ atlas ✓ claude ✓ raindrop – preflight �
 
 `npm run green` makes a real call for each row. The `openplc` / `factoryio` rows stay red until §5–§6 are done.
 
+### 2.1 Least-privilege database users (two users, not one)
+
+| User (URI var) | Role | Why |
+|---|---|---|
+| worker (`MONGODB_URI`) | built-in `readWrite@mongomation` | writes all engineering state; runs the RSI transactions (`rsi/evolve.ts`) and the `jobs` change stream (`harness/jobwatch.ts`) |
+| dashboard (`MONGODB_URI_WEB`) | custom `mm_web` | reads everything, can only **insert** into `jobs` (buttons enqueue work); cannot update or delete anything |
+
+`mm_web` = inherited `read@mongomation` + one extra privilege:
+
+```json
+{
+  "roleName": "mm_web",
+  "inheritedRoles": [{ "role": "read", "db": "mongomation" }],
+  "actions": [{ "action": "INSERT", "resources": [{ "db": "mongomation", "collection": "jobs" }] }]
+}
+```
+
+Create it (Atlas UI: Database Access → Custom Roles → Add: Built-in Role `read` on `mongomation`, Collection action
+`insert` on `mongomation.jobs`; then Database Users → edit the dashboard user → Custom Role `mm_web`, remove other
+roles). Or with the Atlas CLI:
+
+```bash
+atlas customDbRoles create mm_web --inheritedRole read@mongomation --privilege INSERT@mongomation.jobs
+atlas dbusers update <dashboard-user> --role mm_web@admin
+```
+
+Check without writing anything: `mongosh "$MONGODB_URI_WEB" --eval 'db.runCommand({connectionStatus: 1, showPrivileges: true}).authInfo.authenticatedUserPrivileges'`
+lists `find`/`changeStream`/... on `mongomation` and `insert` only on `mongomation.jobs`.
+
 ## 3. Local preflight compiler (MatIEC `iec2c`, optional)
 
 The worker can syntax-check ST locally before it touches the shared rig. Without it the preflight row reports
@@ -62,7 +91,48 @@ node -e "import('strucpp/node').then(m=>console.log(m.getVersion()))"    # verif
 - Alternative, only when the worker runs **on the Linux rig host**: `OPENPLC_BUILDER=docker:plc-builder` uses the
   rig's own builder image (`docker run --rm -v <dir>:/work plc-builder /work/main.st /work/out`).
 
-## 5. AWS rig access (SSM port forwarding, in WSL)
+## 5. Rig access
+
+### 5.0 Team gateway (preferred: any network, no AWS, no VPN)
+
+The rig owner's kit puts both APIs behind one HTTPS gateway with path prefixes. Every OpenPLC and Factory I/O request
+must carry `X-Team-Key: <TEAM_API_KEY>`; OpenPLC still needs its own JWT login (`/api/login`, user `autominus`).
+The certificate is self-signed. Without the key the gateway answers HTTP 401 (`missing or wrong X-Team-Key`), which is
+also the quickest reachability check.
+
+```bash
+# ~/mongomation/.env (gitignored; values from the private rig kit)
+OPENPLC_URL=https://<GATEWAY>/openplc      # paths are appended: <GATEWAY>/openplc/api/login, /api/status, ...
+FACTORYIO_URL=https://<GATEWAY>/factoryio  # <GATEWAY>/factoryio/api/tags, ...
+OPENPLC_INSECURE_TLS=true
+FACTORYIO_INSECURE_TLS=true
+FACTORYIO_HOST_HEADER=                     # leave EMPTY with the gateway
+# Secrets: link the kit's .env instead of copying (every npm script loads .env, then .env.rig; the later file wins)
+#   ln -sf /mnt/c/<path to kit>/.env ~/mongomation/.env.rig      # gitignored; provides TEAM_API_KEY + OPENPLC_PASSWORD
+```
+
+Check: `npm run rig:smoke` (read-only; prints `team key set|empty`, never values; every row must be ✓). Then go to §6.
+
+#### 5.0b Older direct NAT access (team Wi-Fi allowlist; superseded by the gateway)
+
+The rig owner exposes the two APIs on the rig's public address, allowlisted to the team Wi-Fi's public IP only.
+Check yours first: `curl -s https://checkip.amazonaws.com` must print the allowlisted IP (in the private handoff);
+from any other network the connections time out. Values are in the private handoff; put them in your gitignored `.env`:
+
+```bash
+OPENPLC_URL=https://<RIG_PUBLIC_IP>:8444          # OpenPLC v4 REST, self-signed cert -> OPENPLC_INSECURE_TLS=true
+FACTORYIO_URL=http://<RIG_PUBLIC_IP>:7410         # Factory I/O Web API (NAT)
+FACTORYIO_HOST_HEADER=<RIG_FIO_HOST>:7410         # REQUIRED for direct access: every Factory I/O request sends this Host
+OPENPLC_USER=autominus
+OPENPLC_PASSWORD=                                 # type it into .env yourself (rig owner / SSM); never paste it in chat
+```
+
+The worker and `rig:smoke` send `FACTORYIO_HOST_HEADER` via `node:http` (Node's `fetch` silently drops a custom
+`Host` header). Leave it empty when using the SSM tunnels below. The 3D view (DCV, port 8443 on the same address) is
+browser-only. Then go to §6. If the direct ports time out, the rig is stopped or your IP is not allowlisted: ask the
+rig owner, or fall back to the SSM tunnels.
+
+### 5.1-5.5 Fallback: AWS SSM port forwarding (in WSL)
 
 Only the person with AWS access to the rig (team: the teammate who owns the rig login) does this section. Agents and
 scripts never log in or change AWS resources; they only read the SSM parameter and port-forward.
@@ -172,6 +242,8 @@ See `docs/DEMO_RUNBOOK.md` for the recorded demo order.
 
 | Symptom | Cause / fix |
 |---|---|
+| direct access: `timed out` on `<RIG_PUBLIC_IP>:8444` / `:7410` | not on the team Wi-Fi (check `curl -s https://checkip.amazonaws.com`), or the rig is stopped — ask the rig owner (§5.0) |
+| direct access: Factory I/O HTTP 4xx/404 or wrong host | `FACTORYIO_HOST_HEADER` missing/wrong in `.env` (§5.0) |
 | `ECONNREFUSED 127.0.0.1:8443` / `:7410` | tunnels not running, or opened on Windows instead of WSL (§5) |
 | `OPENPLC_PASSWORD is not set` | `source scripts/rig-env.sh` in the same shell that starts the worker |
 | `TargetNotConnected` / `AccessDenied` from `aws ssm` | not logged in, expired session, or missing IAM permission — ask the rig owner |

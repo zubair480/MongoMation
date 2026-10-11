@@ -11,8 +11,15 @@ compile, start, relink). Cut those waits in editing; do not fake them.
 
 ## 0. Prep (T-45 min; not recorded)
 
-The rig steps (AWS login, tunnels, password) are done by the teammate who has AWS access to the rig, on their machine.
-Alternative: run the worker on the Linux rig host itself with `OPENPLC_BUILDER=docker:plc-builder` (no tunnels;
+Preferred: **the team gateway** (any network, no AWS, no tunnels; `docs/SETUP.md` §5.0). `.env` holds
+`OPENPLC_URL=https://<GATEWAY>/openplc`, `FACTORYIO_URL=https://<GATEWAY>/factoryio`, `OPENPLC_INSECURE_TLS=true`,
+`FACTORYIO_INSECURE_TLS=true`, `FACTORYIO_HOST_HEADER=` (empty). `TEAM_API_KEY` + `OPENPLC_PASSWORD` come from
+`.env.rig` (gitignored symlink to the kit `.env`, loaded after `.env` by every npm script). Check:
+`npm run rig:smoke` must show all rows ✓ (login, ping, STATUS:RUNNING, 41 tags, scene running, 24/24 tags);
+skip the `aws`/`rig-tunnels`/`rig-env` lines below. Never show `.env.rig` on screen.
+
+Fallback (SSM tunnels): the rig steps (AWS login, tunnels, password) are done by the teammate who has AWS access to
+the rig, on their machine. Alternative: run the worker on the Linux rig host itself with `OPENPLC_BUILDER=docker:plc-builder` (no tunnels;
 URLs `https://127.0.0.1:8443` and `http://<RIG_FIO_HOST>:7410`).
 
 All in **one WSL shell** at `~/mongomation` (tunnels and worker must share WSL; see `docs/SETUP.md` §5).
@@ -77,6 +84,7 @@ Without the rig, jobs that need it end **BLOCKED** with the real error. That is 
 
 | Symptom | Fix |
 |---|---|
+| `rig:smoke` timed out (direct access) | not on the team Wi-Fi / rig stopped / IP not allowlisted; check `curl -s https://checkip.amazonaws.com`, ask the rig owner |
 | `rig:smoke` ECONNREFUSED on 8443/7410 | `bash scripts/rig-tunnels.sh status` / `logs`; restart with `stop` + `start`; tunnels must run in WSL |
 | `aws sts get-caller-identity` fails | session expired: the operator logs in again (`aws login --remote`) |
 | `OPENPLC_PASSWORD is not set` | `source scripts/rig-env.sh` in the shell that runs the launcher, then restart the launcher |

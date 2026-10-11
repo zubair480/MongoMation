@@ -1,7 +1,7 @@
 // MongoDB Atlas: the single source of truth for projects, PLC versions, measurements, harness versions and
 // RSI decisions. Only the worker writes engineering state (MONGODB_URI = writer user). The dashboard uses a
 // reader user plus write access to `jobs` only (docs/INTEGRATION_CONTRACT.md §6).
-import { MongoClient, type Collection, type Db, type Document } from "mongodb";
+import { MongoClient, type ClientSession, type Collection, type Db, type Document } from "mongodb";
 
 const uri = process.env.MONGODB_URI;
 export const DB_NAME = process.env.MONGODB_DB || "mongomation";
@@ -48,6 +48,21 @@ export const col = {
   rigLocks: c("rig_locks"),
   traces: c("trace_refs"),
   rigStatus: c("rig_status"),
+  streamTokens: c("change_stream_tokens"),
 } satisfies Record<string, () => Collection>;
+
+/**
+ * Runs `fn` as one multi-document ACID transaction (snapshot read, majority commit). Uses the driver's
+ * `withTransaction`, which retries the whole callback on TransientTransactionError and retries the commit on
+ * UnknownTransactionCommitResult. `fn` must pass `{ session }` to every operation and must not swallow errors.
+ */
+export async function withTxn<T>(fn: (session: ClientSession) => Promise<T>, mongo: Pick<MongoClient, "startSession"> = client): Promise<T> {
+  const session = mongo.startSession();
+  try {
+    return await session.withTransaction(fn, { readConcern: { level: "snapshot" }, writeConcern: { w: "majority" }, readPreference: "primary" });
+  } finally {
+    await session.endSession();
+  }
+}
 
 export const now = () => new Date();

@@ -2,7 +2,7 @@
 // `parent` is the version it came from. "Current" = newest version with verdict "kept".
 import { readFileSync } from "node:fs";
 import type { HarnessBody, HarnessConfig } from "@mongomation/types";
-import { MongoServerError } from "mongodb";
+import { MongoServerError, type ClientSession } from "mongodb";
 import { col } from "../db/index.ts";
 
 export const BASELINE: HarnessConfig = {
@@ -31,10 +31,14 @@ export async function history(): Promise<HarnessConfig[]> {
   return (await col.harness().find({}, { sort: { version: 1 } }).toArray()).map((d) => strip(d as unknown as HarnessConfig));
 }
 
-/** Stores a candidate as a new "pending" version on top of `parent`. Returns it. */
-export async function storeCandidate(parent: HarnessConfig, body: HarnessBody, rationale: string, evidence: HarnessConfig["evidence"]) {
+/**
+ * Stores a candidate as a new "pending" version on top of `parent`. Returns it.
+ * With a `session` it joins that transaction and does NOT retry a duplicate version itself: an error inside a
+ * transaction must propagate so `withTransaction` aborts the whole unit (proposal + benchmark job included).
+ */
+export async function storeCandidate(parent: HarnessConfig, body: HarnessBody, rationale: string, evidence: HarnessConfig["evidence"], session?: ClientSession) {
   for (let tries = 0; ; tries++) {
-    const [latest] = await col.harness().find({}, { sort: { version: -1 }, limit: 1, projection: { version: 1 } }).toArray();
+    const [latest] = await col.harness().find({}, { sort: { version: -1 }, limit: 1, projection: { version: 1 }, session }).toArray();
     const next: HarnessConfig = {
       ...body,
       version: ((latest?.version as number | undefined) ?? -1) + 1,
@@ -45,15 +49,17 @@ export async function storeCandidate(parent: HarnessConfig, body: HarnessBody, r
       createdAt: new Date().toISOString(),
     };
     try {
-      await col.harness().insertOne({ ...next });
+      await col.harness().insertOne({ ...next }, { session });
       return next;
     } catch (err) {
-      if (err instanceof MongoServerError && err.code === 11000 && tries < 5) continue;
+      if (!session && err instanceof MongoServerError && err.code === 11000 && tries < 5) continue;
       throw err;
     }
   }
 }
 
-export async function recordVerdict(version: number, update: Partial<HarnessConfig>) {
-  await col.harness().updateOne({ version, verdict: "pending" }, { $set: { ...update, decidedAt: new Date().toISOString() } });
+/** Returns how many pending versions were decided (0 = it was already decided, e.g. by a retried job). */
+export async function recordVerdict(version: number, update: Partial<HarnessConfig>, session?: ClientSession) {
+  const r = await col.harness().updateOne({ version, verdict: "pending" }, { $set: { ...update, decidedAt: new Date().toISOString() } }, { session });
+  return r.modifiedCount;
 }
