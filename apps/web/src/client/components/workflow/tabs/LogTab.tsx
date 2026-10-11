@@ -2,7 +2,7 @@
 // Interrupt / Resume are real worker commands, so both sit behind a confirm.
 import * as React from 'react';
 import { useJobMutation } from '@/client/lib/api';
-import { WORKER_STALE_MS, type DashboardData, type JobCreated, type ProjectData, type RsiData } from '@/shared/mongomation';
+import { WORKER_STALE_MS, type DashboardData, type JobCreated, type LessonLite, type ProjectData, type RsiData } from '@/shared/mongomation';
 import { STEPS, fmtDur, type RunView } from '@/client/plcflow/model';
 import { t8 } from './ProgramTab';
 
@@ -21,12 +21,30 @@ export default function LogTab({ run, p, dash, rsi, signedIn, sub: subProp, onSu
   let body: React.ReactNode = null;
 
   if (sub === 'lessons') {
-    const lessons = p?.diagnosis?.lessons ?? [];
+    // This project's lessons (all its diagnoses + lessons-collection entries citing it), then recent global
+    // lessons from the `lessons` collection, then the active harness rules. Older servers only send p.diagnosis.
+    const own: LessonLite[] = p?.lessons?.project
+      ?? (p?.diagnosis?.lessons ?? []).map((l, i) => ({ id: `d${i}`, pattern: l.pattern, fix: l.fix, source: 'diagnosis' as const,
+        requirementIds: [...new Set(p?.diagnosis?.causes.map((c) => c.requirementId).filter((x): x is string => !!x) ?? [])], createdAt: p?.diagnosis?.createdAt }));
+    const global = p?.lessons?.global ?? [];
     const rules = rsi?.active?.rules ?? [];
+    const when = (d?: Date | string) => (d ? new Date(d).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
+    const srcPill = (l: LessonLite) => <span className={`pill ${l.source === 'repair' ? 'go' : l.source === 'critic' ? 'ca' : 'me'}`}>{l.source === 'repair' ? 'diagnosis → repair' : l.source === 'critic' ? 'critic' : l.source === 'lesson-writer' ? 'lesson writer' : 'diagnosis'}</span>;
+    const row = (l: LessonLite, isNew: boolean) => (
+      <div key={l.id} className={`lesson${isNew ? ' new' : ''}`}><span className="n">{isNew ? 'run' : l.verified ? '✓' : '·'}</span>
+        <span>{l.pattern}{l.fix ? ` — ${l.fix}` : ''}</span>
+        <span className="src">{when(l.createdAt)}{l.requirementIds.length ? <><br /><span className="mono">{l.requirementIds.join(', ')}</span></> : null}{l.category ? <><br /><span className="mono">{l.category.replace(/_/g, ' ')}</span></> : null}<br />{srcPill(l)}</span></div>);
+    const head = (t: string, n: number) => <p className="lbl" style={{ margin: '14px 0 6px' }}>{t} · {n}</p>;
     body = (<div className="card"><div className="ch"><h3>Lessons learned</h3><span className="r sub">stored in Atlas · retrieved into the next run</span></div><div className="cb">
-      {lessons.map((l, i) => <div key={`l${i}`} className="lesson new"><span className="n">new</span><span>{l.pattern}{l.fix ? ` — ${l.fix}` : ''}</span><span className="src">this run<br /><span className="pill me">from diagnosis</span></span></div>)}
-      {rules.map((r, i) => <div key={`r${i}`} className="lesson"><span className="n">#{String(rules.length - i).padStart(2, '0')}</span><span>{r}</span><span className="src">harness v{rsi?.active?.version}</span></div>)}
-      {!lessons.length && !rules.length ? <div className="empty" style={{ padding: 24 }}>No lessons recorded yet</div> : null}</div></div>);
+      {!p ? <div className="empty" style={{ padding: 24 }}>Loading lessons from Atlas…</div> : <>
+        {head('This project', own.length)}
+        {own.length ? own.map((l) => row(l, true)) : <div className="empty" style={{ padding: 12 }}>No lessons recorded for this project</div>}
+        {head('Recent global lessons', global.length)}
+        {global.length ? global.map((l) => row(l, false)) : <div className="empty" style={{ padding: 12 }}>No global lessons in Atlas</div>}
+        {head(`Active harness rules${rsi?.active?.version != null ? ` · v${rsi.active.version}` : ''}`, rules.length)}
+        {rules.length ? rules.map((r, i) => <div key={`r${i}`} className="lesson"><span className="n">#{String(rules.length - i).padStart(2, '0')}</span><span>{r}</span><span className="src">harness v{rsi?.active?.version}</span></div>)
+          : <div className="empty" style={{ padding: 12 }}>{rsi ? 'The active harness has no rules' : 'Loading harness…'}</div>}
+      </>}</div></div>);
   }
 
   if (sub === 'traces') {

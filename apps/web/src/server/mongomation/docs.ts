@@ -14,6 +14,7 @@ import type {
   HarnessVersionLite,
   IoLite,
   JobLite,
+  LessonLite,
   PlcVersionMeta,
   ProjectDetail,
   ProjectListItem,
@@ -437,6 +438,44 @@ export function toDiagnosis(d: Document): DiagnosisLite {
   };
 }
 
+/** Lessons embedded in one diagnosis doc (diagnoses[].lessons). `repaired` = a repair cites this diagnosis. */
+export function lessonsFromDiagnosis(d: Document, repaired: boolean, hiddenIds: readonly string[] = []): LessonLite[] {
+  const id = idOf(d._id);
+  const reqs = [...new Set(objArr(d.causes).map((c) => str(c.requirementId)).filter((x): x is string => !!x))]
+    .map((r) => redactHidden(r, hiddenIds) ?? r)
+    .slice(0, 8);
+  return objArr(d.lessons)
+    .slice(0, 20)
+    .map((l, i) => ({
+      id: `${id}:${i}`,
+      pattern: redactHidden(clip(str(l.pattern), 400), hiddenIds),
+      fix: redactHidden(clip(str(l.fix), 400), hiddenIds),
+      source: repaired ? ('repair' as const) : ('diagnosis' as const),
+      requirementIds: reqs,
+      createdAt: date(d.createdAt),
+      projectId: str(d.projectId),
+    }))
+    .filter((l) => l.pattern || l.fix);
+}
+
+/** One document of the `lessons` collection (written by the lesson writer / critic). */
+export function toLessonDoc(d: Document, hiddenIds: readonly string[] = []): LessonLite {
+  const origin = str(d.origin) ?? '';
+  const src = obj(d.lastSource) ?? objArr(d.sources)[0];
+  return {
+    id: idOf(d._id),
+    pattern: redactHidden(clip(str(d.pattern) ?? str(d.trigger), 400), hiddenIds),
+    fix: redactHidden(clip(str(d.fix) ?? str(d.rule), 400), hiddenIds),
+    source: /critic/i.test(origin) || /critic/i.test(str(src?.verifiedBy) ?? '') ? 'critic' : 'lesson-writer',
+    requirementIds: [],
+    createdAt: date(d.createdAt),
+    status: str(d.status) ?? (d.active === true ? 'active' : d.active === false ? 'inactive' : undefined),
+    category: str(d.category),
+    verified: bool(d.verified),
+    projectId: str(src?.projectId) ?? str(obj(d.evidence)?.projectId),
+  };
+}
+
 // ---- harness / RSI ------------------------------------------------------------------------------
 
 const SCORE_KEYS: (keyof HarnessScoresLite)[] = [
@@ -477,6 +516,7 @@ export function toHarnessVersion(d: Document): HarnessVersionLite {
     decidedAt: date(d.decidedAt),
     rulesCount: num(d.rulesCount) ?? (Array.isArray(d.rules) ? d.rules.length : 0),
     hasScores: !!toScores(d.scores),
+    restoredFrom: num(d.restoredFrom),
   };
 }
 
@@ -526,5 +566,40 @@ export function toProposal(d: Document): ProposalLite {
     verdict: str(d.verdict),
     benchmarkIds: strArr(d.benchmarkIds),
     provenance: str(d.provenance),
+    jobId: str(d.jobId) ?? (d.jobId ? idOf(d.jobId) : undefined),
+    trigger: clip(str(d.trigger), 200),
+    evidence: toProposalEvidence(d.evidenceSummary),
+  };
+}
+
+// Evidence the proposer saw. Test-result ids are deliberately NOT forwarded (they can reference hidden tests);
+// free text is scrubbed of hidden-test-id patterns.
+function toProposalEvidence(v: unknown): ProposalLite['evidence'] {
+  const e = obj(v);
+  if (!e) return undefined;
+  const rd = obj(e.raindrop);
+  return {
+    harnessVersion: num(e.harnessVersion),
+    projects: num(e.projects),
+    requirementSatisfaction: num(e.requirementSatisfaction),
+    clusters: objArr(e.clusters)
+      .slice(0, 12)
+      .map((c) => ({
+        pattern: redactHidden(clip(str(c.pattern), 300)) ?? '—',
+        count: num(c.count) ?? 0,
+        projects: num(c.projects),
+        runIds: strArr(c.runIds).slice(0, 20),
+        raindropEvents: strArr(c.raindropEventIds).length,
+      })),
+    raindrop: rd
+      ? {
+          source: str(rd.source),
+          windowDays: num(rd.windowDays),
+          totalEvents: num(rd.totalEvents),
+          signals: objArr(rd.signals)
+            .slice(0, 10)
+            .map((s) => ({ name: clip(str(s.name), 120) ?? '—', sentiment: str(s.sentiment), events: num(s.events) ?? 0 })),
+        }
+      : undefined,
   };
 }

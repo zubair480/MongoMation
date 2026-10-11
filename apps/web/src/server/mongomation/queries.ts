@@ -33,6 +33,8 @@ import {
   toAssertion,
   toCompile,
   toDiagnosis,
+  lessonsFromDiagnosis,
+  toLessonDoc,
   toEvent,
   toFaultInjection,
   toHarnessDetail,
@@ -270,6 +272,38 @@ export async function project(args: unknown) {
         ]);
       const hiddenIds = strArr(hiddenIdValues);
 
+      // Lessons (Log tab): every diagnosis of this project (diagnoses[].lessons), lessons-collection entries
+      // citing this project, then recent live global lessons.
+      const pidF = idFilter(pid);
+      const [diagLessonDocs, repairedDiagIds, projLessonDocs, globalLessonDocs] = await Promise.all([
+        db
+          .collection('diagnoses')
+          .find({ projectId: pidF }, { projection: { lessons: 1, 'causes.requirementId': 1, createdAt: 1, projectId: 1 } })
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .toArray(),
+        db.collection('repairs').distinct('diagnosisId', { projectId: pidF }),
+        db
+          .collection('lessons')
+          .find({ $or: [{ 'sources.projectId': pidF }, { 'lastSource.projectId': pidF }, { 'evidence.projectId': pidF }] } as Document)
+          .sort({ createdAt: -1 })
+          .limit(20)
+          .toArray(),
+        db
+          .collection('lessons')
+          .find({ status: { $ne: 'superseded' }, active: { $ne: false }, mergedInto: { $exists: false } })
+          .sort({ createdAt: -1 })
+          .limit(12)
+          .toArray(),
+      ]);
+      const repaired = new Set(strArr(repairedDiagIds));
+      const projectLessons = [
+        ...diagLessonDocs.flatMap((d) => lessonsFromDiagnosis(d, repaired.has(idOf(d._id)), hiddenIds)),
+        ...projLessonDocs.map((d) => toLessonDoc(d, hiddenIds)),
+      ].sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+      const projLessonIds = new Set(projLessonDocs.map((d) => idOf(d._id)));
+      const globalLessons = globalLessonDocs.filter((d) => !projLessonIds.has(idOf(d._id))).map((d) => toLessonDoc(d, hiddenIds));
+
       const plcVersions = versionDocs.map(toPlcVersionMeta);
       const latest = plcVersions[0];
       const simRun = simRunDoc ? toSimRun(simRunDoc) : null;
@@ -349,6 +383,7 @@ export async function project(args: unknown) {
         verdictSource,
         faults: faultDocs.map(toFaultInjection),
         diagnosis: diagnosisDoc ? toDiagnosis(diagnosisDoc) : null,
+        lessons: { project: projectLessons, global: globalLessons },
       };
     }),
   );
@@ -475,6 +510,7 @@ export async function rsi() {
                 createdAt: 1,
                 decidedAt: 1,
                 scores: 1,
+                restoredFrom: 1,
                 rulesCount: { $size: { $ifNull: ['$rules', []] } },
               },
             },
@@ -491,11 +527,55 @@ export async function rsi() {
         proposals.countDocuments({}),
       ]);
       const latestProposal = proposalDoc ? toProposal(proposalDoc) : null;
-      const candidateDoc =
+      const activeParent = num(activeDoc?.parent);
+      const [candidateDoc, parentDoc, recentDocs, citedRunDocs] = await Promise.all([
         latestProposal?.candidateVersion !== undefined
-          ? await harness.findOne({ version: latestProposal.candidateVersion }, { projection: { _id: 0 } })
-          : null;
+          ? harness.findOne({ version: latestProposal.candidateVersion }, { projection: { _id: 0 } })
+          : null,
+        activeParent !== undefined ? harness.findOne({ version: activeParent }, { projection: { _id: 0, rules: 1 } }) : null,
+        proposals
+          .find({}, { projection: { verdict: 1, createdAt: 1, fromVersion: 1, diff: 1, rationale: 1 } })
+          .sort({ createdAt: -1, _id: -1 })
+          .limit(5)
+          .toArray(),
+        latestProposal?.citedRunIds.length
+          ? db
+              .collection('sim_runs')
+              .find({ _id: { $in: latestProposal.citedRunIds.flatMap((id) => { const f = idFilter(id); return typeof f === 'string' ? [f] : f.$in; }) } } as Document, {
+                projection: { projectId: 1 },
+              })
+              .toArray()
+          : [],
+      ]);
+      // Rules diff of the active (kept) version vs its parent — never a proposal's diff.
+      let activeRuleDiff: string[] | undefined;
+      if (activeDoc && (activeParent === undefined || parentDoc)) {
+        const now = strArr(activeDoc.rules);
+        const before = strArr(parentDoc?.rules);
+        activeRuleDiff = [
+          ...before.filter((r) => !now.includes(r)).map((r) => `- rules: ${JSON.stringify(clip(r, 600))}`),
+          ...now.filter((r) => !before.includes(r)).map((r) => `+ rules: ${JSON.stringify(clip(r, 600))}`),
+        ];
+      }
+      const citedRunProjects: Record<string, string> = {};
+      for (const r of citedRunDocs) {
+        const pid = str(r.projectId) ?? (r.projectId ? idOf(r.projectId) : undefined);
+        if (pid) citedRunProjects[idOf(r._id)] = pid;
+      }
+      const recentProposals = recentDocs.map((d) => {
+        const diff = Array.isArray(d.diff) ? strArr(d.diff) : (str(d.diff)?.split('\n') ?? []);
+        return {
+          id: idOf(d._id),
+          createdAt: date(d.createdAt),
+          verdict: str(d.verdict),
+          fromVersion: num(d.fromVersion),
+          summary: clip(diff[0] ?? str(d.rationale), 160),
+        };
+      });
       return {
+        activeRuleDiff,
+        citedRunProjects,
+        recentProposals,
         active: activeDoc ? toHarnessDetail(activeDoc) : null,
         versions: historyDocs.map(toHarnessVersion),
         latestProposal,

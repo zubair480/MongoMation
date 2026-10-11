@@ -352,6 +352,24 @@ export interface ProjectData {
   verdictSource: { kind: 'sim_run' | 'project'; simRunId?: string; latestRun?: boolean } | null;
   faults: FaultInjectionLite[];
   diagnosis: DiagnosisLite | null;
+  /** Lessons for the Log tab: this project's (diagnoses + lessons-collection entries citing it), then recent global ones. */
+  lessons?: { project: LessonLite[]; global: LessonLite[] };
+}
+
+/** One lesson as shown in the Log tab. Hidden test ids are scrubbed from all text. */
+export interface LessonLite {
+  id: string;
+  pattern?: string;
+  fix?: string;
+  /** diagnosis = from a diagnosis of this run; repair = that diagnosis drove a repair; critic/lesson-writer = lessons collection. */
+  source: 'diagnosis' | 'repair' | 'critic' | 'lesson-writer';
+  /** Requirements the originating diagnosis covered (failing requirement ids). */
+  requirementIds: string[];
+  createdAt?: Date;
+  status?: string;
+  category?: string;
+  verified?: boolean;
+  projectId?: string;
 }
 
 export interface PlcSourceData {
@@ -401,6 +419,8 @@ export interface HarnessVersionLite {
   decidedAt?: Date;
   rulesCount: number;
   hasScores: boolean;
+  /** Set when this version is an operator restore (copy) of an earlier version. */
+  restoredFrom?: number;
 }
 
 export interface HarnessDetail extends HarnessVersionLite {
@@ -425,10 +445,25 @@ export interface ProposalLite {
   verdict?: string;
   benchmarkIds: string[];
   provenance?: string;
+  jobId?: string;
+  trigger?: string;
+  evidence?: {
+    harnessVersion?: number;
+    projects?: number;
+    requirementSatisfaction?: number;
+    clusters: { pattern: string; count: number; projects?: number; runIds: string[]; raindropEvents: number }[];
+    raindrop?: { source?: string; windowDays?: number; totalEvents?: number; signals: { name: string; sentiment?: string; events: number }[] };
+  };
 }
 
 export interface RsiData {
   active: HarnessDetail | null;
+  /** Rules diff of the active version vs its parent ("+ " / "- " lines); [] when the rules are identical. */
+  activeRuleDiff?: string[];
+  /** sim_run id → project id for the latest proposal's cited runs (only those resolvable). */
+  citedRunProjects?: Record<string, string>;
+  /** Newest first, up to 5. */
+  recentProposals?: { id: string; createdAt?: Date; verdict?: string; fromVersion?: number; summary?: string }[];
   /** Newest first. */
   versions: HarnessVersionLite[];
   latestProposal: ProposalLite | null;
