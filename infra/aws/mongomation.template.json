@@ -1,0 +1,926 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "MongoMation: S3 run artifacts, CloudWatch metrics/logs/alarms, SSM rig probe, Scheduler rig cost control (project=mongomation)",
+  "Parameters": {
+    "ProjectTag": {
+      "Type": "String",
+      "Default": "mongomation"
+    },
+    "ArtifactsBucketName": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Leave empty for a generated name"
+    },
+    "ArtifactsPrefix": {
+      "Type": "String",
+      "Default": "runs/"
+    },
+    "ArtifactRetentionDays": {
+      "Type": "Number",
+      "Default": 30,
+      "MinValue": 1
+    },
+    "LogRetentionDays": {
+      "Type": "Number",
+      "Default": 14,
+      "AllowedValues": [
+        1,
+        3,
+        5,
+        7,
+        14,
+        30,
+        60,
+        90
+      ]
+    },
+    "MetricsNamespace": {
+      "Type": "String",
+      "Default": "MongoMation"
+    },
+    "RigId": {
+      "Type": "String",
+      "Default": "rig-1",
+      "Description": "RIG_ID used as the Rig metric dimension"
+    },
+    "RigInstanceId": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Existing Linux OpenPLC rig instance (referenced, never modified by this stack)"
+    },
+    "FioInstanceId": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional Windows Factory I/O instance (for worker IAM only)"
+    },
+    "OpenPlcPasswordParam": {
+      "Type": "String",
+      "Default": "/autominus/openplc-api-password"
+    },
+    "AlarmEmail": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional: email subscribed to rig alarms (confirm the SNS mail)"
+    },
+    "AlarmMissingData": {
+      "Type": "String",
+      "Default": "missing",
+      "AllowedValues": [
+        "missing",
+        "breaching",
+        "notBreaching",
+        "ignore"
+      ]
+    },
+    "HealthProbeState": {
+      "Type": "String",
+      "Default": "DISABLED",
+      "AllowedValues": [
+        "ENABLED",
+        "DISABLED"
+      ]
+    },
+    "HealthProbeRate": {
+      "Type": "String",
+      "Default": "rate(5 minutes)"
+    },
+    "RigPowerScheduleState": {
+      "Type": "String",
+      "Default": "DISABLED",
+      "AllowedValues": [
+        "ENABLED",
+        "DISABLED"
+      ]
+    },
+    "RigStopCron": {
+      "Type": "String",
+      "Default": "cron(0 1 * * ? *)"
+    },
+    "RigStartCron": {
+      "Type": "String",
+      "Default": "cron(0 8 * * ? *)"
+    },
+    "ScheduleTimezone": {
+      "Type": "String",
+      "Default": "America/Los_Angeles"
+    },
+    "CreateWorkerSecret": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": [
+        "true",
+        "false"
+      ],
+      "Description": "Secrets Manager secret mongomation/worker (~$0.40/month)"
+    }
+  },
+  "Conditions": {
+    "NamedBucket": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "ArtifactsBucketName"
+            },
+            ""
+          ]
+        }
+      ]
+    },
+    "HasRig": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "RigInstanceId"
+            },
+            ""
+          ]
+        }
+      ]
+    },
+    "HasFio": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "FioInstanceId"
+            },
+            ""
+          ]
+        }
+      ]
+    },
+    "HasEmail": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "AlarmEmail"
+            },
+            ""
+          ]
+        }
+      ]
+    },
+    "WantSecret": {
+      "Fn::Equals": [
+        {
+          "Ref": "CreateWorkerSecret"
+        },
+        "true"
+      ]
+    }
+  },
+  "Resources": {
+    "ArtifactsBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "BucketName": {
+          "Fn::If": [
+            "NamedBucket",
+            {
+              "Ref": "ArtifactsBucketName"
+            },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              },
+              "BucketKeyEnabled": true
+            }
+          ]
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "expire-run-artifacts",
+              "Status": "Enabled",
+              "Prefix": {
+                "Ref": "ArtifactsPrefix"
+              },
+              "ExpirationInDays": {
+                "Ref": "ArtifactRetentionDays"
+              },
+              "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 1
+              }
+            },
+            {
+              "Id": "abort-incomplete-uploads",
+              "Status": "Enabled",
+              "Prefix": "",
+              "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 1
+              }
+            }
+          ]
+        },
+        "CorsConfiguration": {
+          "CorsRules": [
+            {
+              "AllowedMethods": [
+                "GET",
+                "HEAD"
+              ],
+              "AllowedOrigins": [
+                "*"
+              ],
+              "AllowedHeaders": [
+                "*"
+              ],
+              "MaxAge": 3600
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "project",
+            "Value": {
+              "Ref": "ProjectTag"
+            }
+          }
+        ]
+      }
+    },
+    "ArtifactsBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "ArtifactsBucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyInsecureTransport",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ArtifactsBucket",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${ArtifactsBucket.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "WorkerLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/mongomation/worker",
+        "RetentionInDays": {
+          "Ref": "LogRetentionDays"
+        },
+        "Tags": [
+          {
+            "Key": "project",
+            "Value": {
+              "Ref": "ProjectTag"
+            }
+          }
+        ]
+      }
+    },
+    "RigProbeLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/mongomation/rig-health",
+        "RetentionInDays": {
+          "Ref": "LogRetentionDays"
+        },
+        "Tags": [
+          {
+            "Key": "project",
+            "Value": {
+              "Ref": "ProjectTag"
+            }
+          }
+        ]
+      }
+    },
+    "RigProbeHealthyFilter": {
+      "Type": "AWS::Logs::MetricFilter",
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "RigProbeLogGroup"
+        },
+        "FilterPattern": "{ ($.openplcProcess IS TRUE) && ($.openplcApiListening IS TRUE) && ($.modbusListening IS TRUE) }",
+        "MetricTransformations": [
+          {
+            "MetricNamespace": {
+              "Ref": "MetricsNamespace"
+            },
+            "MetricName": "ScheduledProbeHealthy",
+            "MetricValue": "1",
+            "DefaultValue": 0,
+            "Unit": "Count"
+          }
+        ]
+      }
+    },
+    "RigHealthProbeDocument": {
+      "Type": "AWS::SSM::Document",
+      "Properties": {
+        "DocumentType": "Command",
+        "DocumentFormat": "JSON",
+        "Name": "MongoMation-RigHealthProbe",
+        "UpdateMethod": "NewVersion",
+        "Tags": [
+          {
+            "Key": "project",
+            "Value": {
+              "Ref": "ProjectTag"
+            }
+          }
+        ],
+        "Content": {
+          "schemaVersion": "2.2",
+          "description": "MongoMation read-only rig probe: OpenPLC process, API :8443, Modbus :502, load/mem/disk. Prints one JSON line.",
+          "mainSteps": [
+            {
+              "action": "aws:runShellScript",
+              "name": "probe",
+              "precondition": {
+                "StringEquals": [
+                  "platformType",
+                  "Linux"
+                ]
+              },
+              "inputs": {
+                "timeoutSeconds": "30",
+                "runCommand": [
+                  "set +e",
+                  "has() { \"$@\" >/dev/null 2>&1 && echo true || echo false; }",
+                  "listen() { (ss -ltnH 2>/dev/null || netstat -ltn 2>/dev/null) | grep -Eq \"[:.]$1[[:space:]]\" && echo true || echo false; }",
+                  "plc=$(has pgrep -f -i openplc)",
+                  "api=$(listen 8443)",
+                  "modbus=$(listen 502)",
+                  "docker_ok=$(has sh -c 'docker ps 2>/dev/null | grep -qi openplc')",
+                  "load=$(cut -d' ' -f1 /proc/loadavg)",
+                  "mem=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)",
+                  "disk=$(df -P / | awk 'NR==2{gsub(\"%\",\"\",$5); print $5}')",
+                  "up=$(cut -d\" \" -f1 /proc/uptime | cut -d. -f1)",
+                  "printf '{\"openplcProcess\":%s,\"openplcApiListening\":%s,\"modbusListening\":%s,\"openplcContainer\":%s,\"load1\":%s,\"memAvailableMb\":%s,\"diskUsedPct\":%s,\"uptimeS\":%s}\\n' \"$plc\" \"$api\" \"$modbus\" \"$docker_ok\" \"${load:-0}\" \"${mem:-0}\" \"${disk:-0}\" \"${up:-0}\""
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "AlarmTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Condition": "HasEmail",
+      "Properties": {
+        "TopicName": "mongomation-alarms",
+        "Subscription": [
+          {
+            "Protocol": "email",
+            "Endpoint": {
+              "Ref": "AlarmEmail"
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "project",
+            "Value": {
+              "Ref": "ProjectTag"
+            }
+          }
+        ]
+      }
+    },
+    "RigUnhealthyAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "mongomation-rig-unhealthy",
+        "AlarmDescription": "Worker SSM probe: OpenPLC process / API / Modbus port not healthy for 2 consecutive 5-minute periods",
+        "Namespace": {
+          "Ref": "MetricsNamespace"
+        },
+        "MetricName": "RigHealthy",
+        "Dimensions": [
+          {
+            "Name": "Rig",
+            "Value": {
+              "Ref": "RigId"
+            }
+          }
+        ],
+        "Statistic": "Minimum",
+        "Period": 300,
+        "EvaluationPeriods": 2,
+        "Threshold": 1,
+        "ComparisonOperator": "LessThanThreshold",
+        "TreatMissingData": {
+          "Ref": "AlarmMissingData"
+        },
+        "AlarmActions": {
+          "Fn::If": [
+            "HasEmail",
+            [
+              {
+                "Ref": "AlarmTopic"
+              }
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "OKActions": {
+          "Fn::If": [
+            "HasEmail",
+            [
+              {
+                "Ref": "AlarmTopic"
+              }
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "project",
+            "Value": {
+              "Ref": "ProjectTag"
+            }
+          }
+        ]
+      }
+    },
+    "ScheduledProbeUnhealthyAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "HasRig",
+      "Properties": {
+        "AlarmName": "mongomation-rig-probe-unhealthy",
+        "AlarmDescription": "Scheduled SSM probe produced no fully healthy result in 15 minutes (only meaningful while HealthProbeState=ENABLED)",
+        "Namespace": {
+          "Ref": "MetricsNamespace"
+        },
+        "MetricName": "ScheduledProbeHealthy",
+        "Statistic": "Sum",
+        "Period": 900,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "LessThanThreshold",
+        "TreatMissingData": {
+          "Ref": "AlarmMissingData"
+        },
+        "AlarmActions": {
+          "Fn::If": [
+            "HasEmail",
+            [
+              {
+                "Ref": "AlarmTopic"
+              }
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "project",
+            "Value": {
+              "Ref": "ProjectTag"
+            }
+          }
+        ]
+      }
+    },
+    "Dashboard": {
+      "Type": "AWS::CloudWatch::Dashboard",
+      "Properties": {
+        "DashboardName": "MongoMation",
+        "DashboardBody": {
+          "Fn::Sub": "{\"widgets\":[{\"type\":\"metric\",\"x\":0,\"y\":0,\"width\":12,\"height\":6,\"properties\":{\"title\":\"Compile / test pass rate (%)\",\"metrics\":[[\"${MetricsNamespace}\",\"CompilePassRate\",\"JobType\",\"engineer\"],[\".\",\"TestPassRate\",\".\",\".\"]],\"stat\":\"Average\",\"period\":300,\"region\":\"${AWS::Region}\",\"view\":\"timeSeries\"}},{\"type\":\"metric\",\"x\":12,\"y\":0,\"width\":12,\"height\":6,\"properties\":{\"title\":\"Repair attempts / job duration (s)\",\"metrics\":[[\"${MetricsNamespace}\",\"RepairAttempts\",\"JobType\",\"engineer\",{\"stat\":\"Sum\"}],[\".\",\"JobDuration\",\".\",\".\",{\"yAxis\":\"right\"}]],\"stat\":\"Average\",\"period\":300,\"region\":\"${AWS::Region}\",\"view\":\"timeSeries\"}},{\"type\":\"metric\",\"x\":0,\"y\":6,\"width\":12,\"height\":6,\"properties\":{\"title\":\"Jobs completed / failed / blocked\",\"metrics\":[[\"${MetricsNamespace}\",\"JobCompleted\",\"JobType\",\"engineer\"],[\".\",\"JobFailed\",\".\",\".\"],[\".\",\"JobBlocked\",\".\",\".\"]],\"stat\":\"Sum\",\"period\":300,\"region\":\"${AWS::Region}\",\"view\":\"timeSeries\"}},{\"type\":\"metric\",\"x\":12,\"y\":6,\"width\":12,\"height\":6,\"properties\":{\"title\":\"Rig healthy (worker probe)\",\"metrics\":[[\"${MetricsNamespace}\",\"RigHealthy\",\"Rig\",\"${RigId}\"],[\".\",\"ScheduledProbeHealthy\"]],\"stat\":\"Minimum\",\"period\":300,\"region\":\"${AWS::Region}\",\"view\":\"timeSeries\"}}]}"
+        }
+      }
+    },
+    "SchedulerGroup": {
+      "Type": "AWS::Scheduler::ScheduleGroup",
+      "Properties": {
+        "Name": "mongomation",
+        "Tags": [
+          {
+            "Key": "project",
+            "Value": {
+              "Ref": "ProjectTag"
+            }
+          }
+        ]
+      }
+    },
+    "SchedulerRole": {
+      "Type": "AWS::IAM::Role",
+      "Condition": "HasRig",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "scheduler.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "rig-power-and-probe",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:StartInstances",
+                    "ec2:StopInstances"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${RigInstanceId}"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "ssm:SendCommand",
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${RigInstanceId}"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${RigHealthProbeDocument}"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "project",
+            "Value": {
+              "Ref": "ProjectTag"
+            }
+          }
+        ]
+      }
+    },
+    "RigHealthProbeSchedule": {
+      "Type": "AWS::Scheduler::Schedule",
+      "Condition": "HasRig",
+      "Properties": {
+        "Name": "mongomation-rig-health-probe",
+        "GroupName": {
+          "Ref": "SchedulerGroup"
+        },
+        "Description": "Read-only SSM Run Command probe of the rig; output -> /mongomation/rig-health -> ScheduledProbeHealthy metric",
+        "State": {
+          "Ref": "HealthProbeState"
+        },
+        "ScheduleExpression": {
+          "Ref": "HealthProbeRate"
+        },
+        "FlexibleTimeWindow": {
+          "Mode": "OFF"
+        },
+        "Target": {
+          "Arn": {
+            "Fn::Sub": "arn:${AWS::Partition}:scheduler:::aws-sdk:ssm:sendCommand"
+          },
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "SchedulerRole",
+              "Arn"
+            ]
+          },
+          "Input": {
+            "Fn::Sub": "{\"DocumentName\":\"${RigHealthProbeDocument}\",\"InstanceIds\":[\"${RigInstanceId}\"],\"CloudWatchOutputConfig\":{\"CloudWatchOutputEnabled\":true,\"CloudWatchLogGroupName\":\"${RigProbeLogGroup}\"}}"
+          },
+          "RetryPolicy": {
+            "MaximumRetryAttempts": 0
+          }
+        }
+      }
+    },
+    "RigStopSchedule": {
+      "Type": "AWS::Scheduler::Schedule",
+      "Condition": "HasRig",
+      "Properties": {
+        "Name": "mongomation-rig-stop",
+        "GroupName": {
+          "Ref": "SchedulerGroup"
+        },
+        "Description": "Nightly rig stop for cost control (DISABLED unless RigPowerScheduleState=ENABLED)",
+        "State": {
+          "Ref": "RigPowerScheduleState"
+        },
+        "ScheduleExpression": {
+          "Ref": "RigStopCron"
+        },
+        "ScheduleExpressionTimezone": {
+          "Ref": "ScheduleTimezone"
+        },
+        "FlexibleTimeWindow": {
+          "Mode": "OFF"
+        },
+        "Target": {
+          "Arn": {
+            "Fn::Sub": "arn:${AWS::Partition}:scheduler:::aws-sdk:ec2:stopInstances"
+          },
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "SchedulerRole",
+              "Arn"
+            ]
+          },
+          "Input": {
+            "Fn::Sub": "{\"InstanceIds\":[\"${RigInstanceId}\"]}"
+          },
+          "RetryPolicy": {
+            "MaximumRetryAttempts": 2
+          }
+        }
+      }
+    },
+    "RigStartSchedule": {
+      "Type": "AWS::Scheduler::Schedule",
+      "Condition": "HasRig",
+      "Properties": {
+        "Name": "mongomation-rig-start",
+        "GroupName": {
+          "Ref": "SchedulerGroup"
+        },
+        "Description": "Morning rig start (DISABLED unless RigPowerScheduleState=ENABLED)",
+        "State": {
+          "Ref": "RigPowerScheduleState"
+        },
+        "ScheduleExpression": {
+          "Ref": "RigStartCron"
+        },
+        "ScheduleExpressionTimezone": {
+          "Ref": "ScheduleTimezone"
+        },
+        "FlexibleTimeWindow": {
+          "Mode": "OFF"
+        },
+        "Target": {
+          "Arn": {
+            "Fn::Sub": "arn:${AWS::Partition}:scheduler:::aws-sdk:ec2:startInstances"
+          },
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "SchedulerRole",
+              "Arn"
+            ]
+          },
+          "Input": {
+            "Fn::Sub": "{\"InstanceIds\":[\"${RigInstanceId}\"]}"
+          },
+          "RetryPolicy": {
+            "MaximumRetryAttempts": 2
+          }
+        }
+      }
+    },
+    "WorkerSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Condition": "WantSecret",
+      "Properties": {
+        "Name": "mongomation/worker",
+        "Description": "JSON object of worker env vars (MONGODB_URI, TEAM_API_KEY, RAINDROP_WRITE_KEY, ...). Read by MM_AWS_SECRETS_ID; only fills unset vars.",
+        "SecretString": "{}",
+        "Tags": [
+          {
+            "Key": "project",
+            "Value": {
+              "Ref": "ProjectTag"
+            }
+          }
+        ]
+      }
+    },
+    "WorkerPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "ManagedPolicyName": "mongomation-worker",
+        "Description": "Least privilege for the MongoMation worker's MM_AWS_* features",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "Artifacts",
+              "Effect": "Allow",
+              "Action": [
+                "s3:PutObject",
+                "s3:GetObject"
+              ],
+              "Resource": {
+                "Fn::Sub": "${ArtifactsBucket.Arn}/*"
+              }
+            },
+            {
+              "Sid": "Metrics",
+              "Effect": "Allow",
+              "Action": "cloudwatch:PutMetricData",
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "cloudwatch:namespace": {
+                    "Ref": "MetricsNamespace"
+                  }
+                }
+              }
+            },
+            {
+              "Sid": "Logs",
+              "Effect": "Allow",
+              "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+              ],
+              "Resource": {
+                "Fn::Sub": "${WorkerLogGroup.Arn}"
+              }
+            },
+            {
+              "Sid": "RigSecret",
+              "Effect": "Allow",
+              "Action": "ssm:GetParameter",
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${OpenPlcPasswordParam}"
+              }
+            },
+            {
+              "Sid": "RigProbe",
+              "Effect": "Allow",
+              "Action": "ssm:SendCommand",
+              "Resource": [
+                {
+                  "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}::document/AWS-RunShellScript"
+                },
+                {
+                  "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}::document/AWS-RunPowerShellScript"
+                },
+                {
+                  "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${RigHealthProbeDocument}"
+                },
+                {
+                  "Fn::If": [
+                    "HasRig",
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${RigInstanceId}"
+                    },
+                    {
+                      "Ref": "AWS::NoValue"
+                    }
+                  ]
+                },
+                {
+                  "Fn::If": [
+                    "HasFio",
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${FioInstanceId}"
+                    },
+                    {
+                      "Ref": "AWS::NoValue"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "Sid": "RigProbeResult",
+              "Effect": "Allow",
+              "Action": "ssm:GetCommandInvocation",
+              "Resource": "*"
+            },
+            {
+              "Sid": "RigDescribe",
+              "Effect": "Allow",
+              "Action": "ec2:DescribeInstances",
+              "Resource": "*"
+            },
+            {
+              "Fn::If": [
+                "HasRig",
+                {
+                  "Sid": "RigPower",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:StartInstances",
+                    "ec2:StopInstances"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${RigInstanceId}"
+                  }
+                },
+                {
+                  "Ref": "AWS::NoValue"
+                }
+              ]
+            },
+            {
+              "Fn::If": [
+                "WantSecret",
+                {
+                  "Sid": "WorkerSecret",
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": {
+                    "Ref": "WorkerSecret"
+                  }
+                },
+                {
+                  "Ref": "AWS::NoValue"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "ArtifactsBucket": {
+      "Value": {
+        "Ref": "ArtifactsBucket"
+      },
+      "Description": "MM_AWS_ARTIFACTS_BUCKET"
+    },
+    "WorkerLogGroup": {
+      "Value": {
+        "Ref": "WorkerLogGroup"
+      },
+      "Description": "MM_AWS_LOG_GROUP"
+    },
+    "WorkerPolicyArn": {
+      "Value": {
+        "Ref": "WorkerPolicy"
+      },
+      "Description": "Attach to the worker's IAM user/role"
+    },
+    "RigHealthProbeDocument": {
+      "Value": {
+        "Ref": "RigHealthProbeDocument"
+      }
+    },
+    "WorkerSecretArn": {
+      "Condition": "WantSecret",
+      "Value": {
+        "Ref": "WorkerSecret"
+      },
+      "Description": "MM_AWS_SECRETS_ID"
+    }
+  }
+}

@@ -16,8 +16,17 @@ if (!project?.finalPlcVersionId) {
   console.error("BLOCKED: no engineered project with a deployed program yet (run `npm run example` first)");
   process.exit(2);
 }
-const jobId = await enqueue({ type: "fault_and_improve", projectId: String(project._id), faultId: arg("--fault"), origin: "script" });
-console.log(`fault job ${jobId} queued for project ${project._id}`);
+// Optional explicit limits for the evolve round this job runs (same meaning as scripts/evolve.ts):
+//   --limit N, --max-repairs N  passed on to the gate benchmark; --evidence-since-job  only failures recorded from
+//   this fault job on are given to the meta-agent (earlier failures, e.g. from since-fixed harness bugs, are ignored).
+const int = (v?: string) => (v !== undefined && Number.isInteger(Number(v)) && Number(v) >= 0 ? Number(v) : undefined);
+const limits = {
+  ...(int(arg("--limit")) && { caseLimit: int(arg("--limit")) }),
+  ...(int(arg("--max-repairs")) !== undefined && { maxRepairs: int(arg("--max-repairs")) }),
+  ...(process.argv.includes("--evidence-since-job") && { evidenceSince: new Date() }),
+};
+const jobId = await enqueue({ type: "fault_and_improve", projectId: String(project._id), faultId: arg("--fault"), origin: "script" }, limits);
+console.log(`fault job ${jobId} queued for project ${project._id}${Object.keys(limits).length ? ` with limits ${JSON.stringify(limits)}` : ""}`);
 for (;;) {
   const job = await col.jobs().findOne({ _id: jobId });
   if (job && ["completed", "failed", "blocked"].includes(job.status)) {

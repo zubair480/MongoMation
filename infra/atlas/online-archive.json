@@ -1,0 +1,11 @@
+{
+  "_comment": "Atlas Online Archive for the measurements time series: samples older than 30 days move to cheap object storage and stay queryable through the federated endpoint. Requires an M10+ dedicated cluster and is billed (storage + data processed). Apply with infra/atlas/apply.sh.",
+  "dbName": "mongomation",
+  "collName": "measurements",
+  "collectionType": "TIMESERIES",
+  "criteria": { "type": "DATE", "dateField": "ts", "dateFormat": "ISODATE", "expireAfterDays": 30 },
+  "partitionFields": [
+    { "fieldName": "meta.simRunId", "order": 0 },
+    { "fieldName": "meta.testId", "order": 1 }
+  ]
+}

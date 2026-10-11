@@ -6,7 +6,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import { RIG_FRESH_MS, WORKER_STALE_MS, type DashboardData, type Envelope } from '@/shared/mongomation';
 import { receivedAtOf } from '@/client/lib/api';
 import { cn } from '@/client/lib/utils';
-import { fmtAge } from '@/client/lib/format';
+import { displayName, fmtAge } from '@/client/lib/format';
 import { TONE_DOT, TONE_TEXT, type Tone } from '@/client/lib/tones';
 import { Tip, useLiveAge } from './ui';
 import { BrandMark } from './BrandMark';
@@ -137,7 +137,7 @@ export function HeaderBar({ dashboardQ }: { dashboardQ: UseQueryResult<Envelope<
 
           {user ? (
             <span className="flex items-center gap-2 rounded-md border border-plant-700 bg-plant-900/80 py-1.5 pl-3 pr-1.5">
-              <span className="max-w-40 truncate text-[12.5px] text-plant-200">{user.handle}</span>
+              <span className="max-w-40 truncate text-[12.5px] text-plant-200">{displayName(user.handle)}</span>
               <Link
                 to="/logout"
                 className="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] text-plant-300 transition-colors hover:bg-plant-800 hover:text-plant-50"

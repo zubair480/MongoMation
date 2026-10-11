@@ -11,6 +11,7 @@ import { addLesson, retrieveLessons, similarFailures } from "../harness/memory.t
 import { withRig } from "../harness/riglock.ts";
 import { BOOT_ID, BlockedError, completedStage, event, runStage, type StageContext } from "../harness/stages.ts";
 import { telemetry } from "../telemetry/index.ts";
+import { awaitLink, LinkDownError, parseHeartbeat } from "../tools/linkprobe.ts";
 import { preflight } from "../tools/preflight.ts";
 import type { PlcRuntime, Simulator } from "../tools/rig.ts";
 import { assembleProgram, ioTable, lineDiff, lintLogic, type GeneratedLogic } from "./st.ts";
@@ -145,6 +146,7 @@ export async function runEngineering(input: EngineerInput, deps: EngineerDeps): 
       { upsert: true, returnDocument: "after" },
     );
     const plcVersionId = String(versionDoc!._id);
+    telemetry.attach(projectId, [{ name: `program v${version}.st`, value: source, type: "code", language: "pascal" }, { name: `diff to v${version}`, value: String(versionDoc?.diffFromPrevious ?? "") }]);
     finalVersionId = plcVersionId;
     await col.projects().updateOne({ _id: projectId as never }, { $set: { currentPlcVersionId: plcVersionId, currentVersion: version } });
 
@@ -174,6 +176,7 @@ export async function runEngineering(input: EngineerInput, deps: EngineerDeps): 
           const doc = await col.compiles().insertOne({ plcVersionId, stage: "compile", toolchain: deps.plc.label, ...r, createdAt: new Date() });
           const traceId = telemetry.tool({ name: "openplc_compile", runId: projectId, input: { sourceHash } }, { ok: r.ok, summary: r.ok ? "compiled" : r.log.slice(-300), durationMs: r.durationMs, evidenceIds: [String(doc.insertedId)] });
           if (!r.ok) telemetry.signal({ runId: projectId, name: "plc_compile_failed", eventId: traceId });
+          if (!r.ok) telemetry.attach(projectId, [{ name: `OpenPLC compile log v${version}`, value: r.log }]);
           return { ...r, compileId: String(doc.insertedId) };
         });
         if (firstCompileOk === null) firstCompileOk = comp.ok;
@@ -183,7 +186,8 @@ export async function runEngineering(input: EngineerInput, deps: EngineerDeps): 
           await deps.plc.start();
           const st = await deps.plc.status();
           if (!st.running) throw new Error(`runtime not running after start: ${st.detail}`);
-          await col.deployments().insertOne({ plcVersionId, sourceHash, runtime: deps.plc.label, status: st, createdAt: new Date() });
+          const link = await linkGate(deps.sim, source, (m) => event(projectId, jobId, "deploy", "info", m));
+          await col.deployments().insertOne({ plcVersionId, sourceHash, runtime: deps.plc.label, status: st, ...(link && { linkUpMs: link.ms }), createdAt: new Date() });
           return { running: true };
         });
         await new Promise((r) => setTimeout(r, scene.timing.settleMs));
@@ -219,7 +223,10 @@ export async function runEngineering(input: EngineerInput, deps: EngineerDeps): 
       }
     }
 
-    if (attempt >= config.workflow.repair_budget) break;
+    if (attempt >= config.workflow.repair_budget) {
+      telemetry.signal({ runId: projectId, name: "repair_budget_exhausted", properties: { attempts: attempt + 1, budget: config.workflow.repair_budget, feedback: feedback.join(" | ").slice(0, 500) } });
+      break;
+    }
 
     // 9. Diagnosis (critic) ---------------------------------------------------------------------------
     const diag = await runStage(ctx, "diagnosis", attempt, { sourceHash, feedback }, async () => {
@@ -286,6 +293,24 @@ async function verifyLessons(projectId: string) {
 }
 
 export const newProjectId = () => new ObjectId().toHexString();
+
+/**
+ * After start(): wait until the PLC <-> Factory I/O Modbus link is proven by the harness heartbeat (tools/linkprobe.ts).
+ * No heartbeat in the program -> null (OpenPlcRest.start() already did the fixed FACTORYIO_RELINK_MS wait).
+ * A link that never comes back is the rig's fault, so it is BLOCKED, never FAILED.
+ */
+export async function linkGate(sim: Simulator, source: string, log: (m: string) => unknown): Promise<{ ms: number } | null> {
+  const hb = parseHeartbeat(source);
+  if (!hb) return null;
+  try {
+    const r = await awaitLink(sim, hb, { timeoutMs: Number(process.env.FACTORYIO_LINK_TIMEOUT_MS || 180_000) });
+    await log(`Modbus link up ${(r.ms / 1000).toFixed(1)} s after RUNNING (heartbeat on "${hb.counterTag}"${hb.ncTag ? `, NC input "${hb.ncTag}" echoed` : ""})`);
+    return { ms: r.ms };
+  } catch (e) {
+    if (e instanceof LinkDownError) throw new BlockedError(e.message);
+    throw e;
+  }
+}
 
 /** Stored errors are shown on the public dashboard: never echo the rig's URL or IP/host:port. */
 export function redactRigHost(text: string): string {

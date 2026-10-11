@@ -1,12 +1,12 @@
-// Data access for the dashboard: plain react-query polling against the mongomation module's queries.
-// Polled reads never toast (a failing read is shown inline as DISCONNECTED / unreachable); mutations
+// Data access for the dashboard. The main views are Modelence LIVE queries (`modelenceLiveQuery`): the
+// server pushes a fresh snapshot over the Modelence websocket whenever its shared Atlas change stream sees
+// a relevant worker write, so nothing here polls. PLC source and test timelines stay on plain reads.
+// Reads never toast (a failing read is shown inline as DISCONNECTED / unreachable); mutations
 // go through the app-wide error handler, which toasts the server's message.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { callMethod, type MethodArgs } from 'modelence/client';
+import { callMethod, modelenceLiveQuery, type MethodArgs } from 'modelence/client';
 import {
-  POLL_FAST_MS,
   POLL_MS,
-  POLL_SLOW_MS,
   type AblationData,
   type DashboardData,
   type Envelope,
@@ -32,30 +32,17 @@ function read<T>(method: string, args: MethodArgs = {}) {
 }
 
 export function useDashboard() {
-  return useQuery({
-    queryKey: ['mongomation.dashboard'],
-    queryFn: read<DashboardData>('dashboard'),
-    refetchInterval: POLL_FAST_MS,
-    retry: 1,
-  });
+  return useQuery(modelenceLiveQuery<Envelope<DashboardData>>('mongomation.liveDashboard'));
 }
 
 export function useScenes() {
-  return useQuery({
-    queryKey: ['mongomation.scenes'],
-    queryFn: read<ScenesData>('scenes'),
-    refetchInterval: POLL_SLOW_MS,
-    retry: 1,
-  });
+  return useQuery(modelenceLiveQuery<Envelope<ScenesData>>('mongomation.liveScenes'));
 }
 
 export function useProject(projectId: string | null) {
   return useQuery({
-    queryKey: ['mongomation.project', projectId],
-    queryFn: read<ProjectData>('project', { projectId }),
+    ...modelenceLiveQuery<Envelope<ProjectData>>('mongomation.liveProject', { projectId }),
     enabled: !!projectId,
-    refetchInterval: POLL_MS,
-    retry: 1,
   });
 }
 
@@ -71,7 +58,10 @@ export function usePlcSource(plcVersionId: string | undefined) {
   });
 }
 
-/** Measurements of a finished test never change; while its sim run is still running, keep polling. */
+/**
+ * Measurements of a finished test never change; while its sim run is still running, keep polling
+ * (`measurements` is a time-series collection, which MongoDB change streams cannot watch).
+ */
 export function useTimeline(simRunId: string | undefined, testId: string | undefined, live: boolean) {
   return useQuery({
     queryKey: ['mongomation.testTimeline', simRunId, testId],
@@ -84,21 +74,11 @@ export function useTimeline(simRunId: string | undefined, testId: string | undef
 }
 
 export function useRsi() {
-  return useQuery({
-    queryKey: ['mongomation.rsi'],
-    queryFn: read<RsiData>('rsi'),
-    refetchInterval: POLL_MS,
-    retry: 1,
-  });
+  return useQuery(modelenceLiveQuery<Envelope<RsiData>>('mongomation.liveRsi'));
 }
 
 export function useAblation() {
-  return useQuery({
-    queryKey: ['mongomation.ablation'],
-    queryFn: read<AblationData>('ablation'),
-    refetchInterval: POLL_SLOW_MS,
-    retry: 1,
-  });
+  return useQuery(modelenceLiveQuery<Envelope<AblationData>>('mongomation.liveAblation'));
 }
 
 /** A job request (insert into `jobs`). Errors are toasted by the app-wide handler and kept on `error`. */
@@ -107,6 +87,7 @@ export function useJobMutation<TArgs extends MethodArgs, TResult>(method: string
   return useMutation({
     mutationFn: (args: TArgs) => callMethod<TResult>(`mongomation.${method}`, args),
     onSettled: () => {
+      // Live queries refresh themselves from the change stream; this only covers plain-read callers.
       void queryClient.invalidateQueries({ queryKey: ['mongomation.dashboard'] });
     },
   });

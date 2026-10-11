@@ -2,8 +2,7 @@
 // The runner only drives sensor-side inputs (buttons, photo-eyes) and observes; it never writes actuators
 // and never touches the PLC program. Every force it applies is released in `finally`.
 import { setTimeout as sleep } from "node:timers/promises";
-import type { Sample, SceneDefinition, StepLog, TagValue, TestCase, TestResult } from "@mongomation/types";
-import { gradeTest } from "./grader.ts";
+import type { Sample, SceneDefinition, StepLog, TagValue, TestCase, TestResult } from "@mongomation/types";import { gradeTest } from "./grader.ts";
 
 /** What the validator needs from the simulator. Implemented by the Factory I/O Web API client. */
 export interface SimRig {
@@ -17,6 +16,10 @@ export interface ExecutedTest {
   logs: StepLog[];
   samples: Sample[];
   startedAt: string; // ISO wall clock of t = 0
+  /** How many times the test ran (2 only after a first attempt BLOCKED for insufficient measurements). */
+  attempts: number;
+  /** The first, superseded attempt when a retry happened. */
+  superseded?: Omit<ExecutedTest, "attempts" | "superseded">;
 }
 
 export interface RunOptions {
@@ -24,6 +27,24 @@ export interface RunOptions {
   /** Called with every sample, for live dashboards. Must not throw. */
   onSample?: (s: Sample) => void;
   now?: () => number;
+  /** false disables the single no-evidence retry (default true). */
+  retryBlocked?: boolean;
+}
+
+/** BLOCKED purely for missing evidence (e.g. a multi-second gateway stall left a window unmeasured). */
+export const blockedForMissingEvidence = (r: TestResult) => r.verdict === "blocked" && Boolean(r.blockedReason?.startsWith("insufficient measurements"));
+
+/**
+ * Runs a test. A test that ended BLOCKED for insufficient measurements is re-run AT MOST ONCE; a FAILED test
+ * (a measured violation), a step error or any other block is never retried, so a defect cannot be retried away,
+ * and a test blocked again stays blocked. The superseded first attempt is returned in `superseded` so the caller
+ * stores it too (marked superseded) and the record stays complete.
+ */
+export async function executeTest(rig: SimRig, scene: SceneDefinition, test: TestCase, opts: RunOptions = {}): Promise<ExecutedTest> {
+  const first = await executeOnce(rig, scene, test, opts);
+  if (opts.retryBlocked === false || !blockedForMissingEvidence(first.result)) return { ...first, attempts: 1 };
+  const second = await executeOnce(rig, scene, test, opts);
+  return { ...second, attempts: 2, superseded: first };
 }
 
 function activeLevel(scene: SceneDefinition, tag: string): boolean {
@@ -33,7 +54,7 @@ function activeLevel(scene: SceneDefinition, tag: string): boolean {
   return !t.activeLow;
 }
 
-export async function executeTest(rig: SimRig, scene: SceneDefinition, test: TestCase, opts: RunOptions = {}): Promise<ExecutedTest> {
+async function executeOnce(rig: SimRig, scene: SceneDefinition, test: TestCase, opts: RunOptions): Promise<Omit<ExecutedTest, "attempts" | "superseded">> {
   const now = opts.now ?? (() => performance.now());
   const period = opts.samplePeriodMs ?? scene.timing.samplePeriodMs;
   const startedAt = new Date().toISOString();

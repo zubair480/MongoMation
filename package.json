@@ -16,6 +16,7 @@
     "verify:isolation": "tsx scripts/verify-isolation.ts",
     "green": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.rig scripts/green-check.ts",
     "setup:atlas": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.rig scripts/setup-atlas.ts",
+    "setup:search": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.rig scripts/setup-search.ts",
     "seed": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.rig scripts/seed.ts",
     "preflight": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.rig scripts/preflight-st.ts",
     "worker": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.rig apps/worker/src/main.ts",
@@ -28,7 +29,8 @@
     "rig:smoke": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.rig scripts/rig-smoke.ts",
     "ledger": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.rig scripts/evidence-ledger.ts",
     "export": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.rig scripts/export-project.ts",
-    "probe": "tsx scripts/gen-probe.ts"
+    "probe": "tsx scripts/gen-probe.ts",
+    "raindrop:smoke": "tsx --env-file-if-exists=.env scripts/raindrop-smoke.ts"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

@@ -57,6 +57,8 @@ import { parseArgs } from './errors';
 import { exampleList } from './examples';
 
 const NOT_A_COMMAND = { type: { $ne: 'worker_command' } };
+// Superseded first attempts of retried tests (validate.ts) keep their measurements under `<id>~attempt1`.
+const SUPERSEDED_TEST_ID = /~attempt\d+$/;
 
 const JOB_FIELDS = {
   type: 1,
@@ -262,7 +264,9 @@ export async function project(args: unknown) {
             .limit(1)
             .next(),
           // Exact hidden test ids, so free text (events, stage errors) can be scrubbed of them.
-          db.collection('test_results').distinct('testId', { projectId: pid, visibility: { $ne: 'public' } }),
+          db
+            .collection('test_results')
+            .distinct('testId', { projectId: pid, visibility: { $ne: 'public' }, superseded: { $ne: true } }),
         ]);
       const hiddenIds = strArr(hiddenIdValues);
 
@@ -283,7 +287,11 @@ export async function project(args: unknown) {
           ? db
               .collection('test_results')
               // Test steps and step logs never leave the server (hidden tests stay hidden).
-              .find({ simRunId: idFilter(simRun.id) }, { projection: { steps: 0, stepLogs: 0 } })
+              // Superseded first attempts (retried tests) are not separate tests.
+              .find(
+                { simRunId: idFilter(simRun.id), superseded: { $ne: true }, testId: { $not: SUPERSEDED_TEST_ID } },
+                { projection: { steps: 0, stepLogs: 0 } },
+              )
               .sort({ startedAt: 1, _id: 1 })
               .limit(500)
               .toArray()
@@ -414,10 +422,11 @@ export async function testTimeline(args: unknown) {
   return cached(`timeline:${simRunId}:${testId}`, () =>
     withAtlas<TimelineData>(async (db) => {
       const empty = { simRunId, testId, samples: [], totalSamples: 0, truncated: false, assertions: [] };
+      if (SUPERSEDED_TEST_ID.test(testId)) return { ...empty, found: false, hidden: false };
       const result = await db
         .collection('test_results')
         .findOne(
-          { simRunId: idFilter(simRunId), testId },
+          { simRunId: idFilter(simRunId), testId, superseded: { $ne: true } },
           { projection: { visibility: 1, assertions: 1, durationMs: 1 } },
         );
       if (!result) return { ...empty, found: false, hidden: false };

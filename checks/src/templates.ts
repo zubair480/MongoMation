@@ -5,7 +5,13 @@ import type { BoundRequirement, TestCase, TestStep } from "@mongomation/types";
 
 /** End-to-end latency budget: Factory I/O -> Modbus poll -> PLC scan -> Modbus -> Factory I/O. */
 export const RESPONSE_MS = 1500;
-export const PRESS_MS = 400;
+/**
+ * How long a push button is held (and a passing part blocks a sensor). Live rig evidence (sim runs 6acbd930..c6,
+ * 6acbd9d3..97): 400-700 ms presses of Start/Stop/Reset were visible on the Factory I/O tag yet never reached the
+ * PLC through the Factory I/O -> Modbus -> OpenPLC path, while >= 1.5 s holds always did. A real operator press
+ * also lasts a good fraction of a second, so 1 s is both physically plausible and inside the rig's input latency.
+ */
+export const PRESS_MS = 1000;
 
 export type Template = (r: BoundRequirement) => TestCase[];
 
@@ -222,20 +228,44 @@ export const PUBLIC_TEMPLATES: Partial<Record<BoundRequirement["kind"], Template
     const start = r.bindings.start;
     const steps: TestStep[] = [...(start ? [{ op: "press", tag: start, holdMs: PRESS_MS } as TestStep] : [])];
     steps.push({ op: "expect", tag: act, value: true, withinMs: RESPONSE_MS, label: `${act} running` });
-    for (let i = 0; i < n; i++) steps.push({ op: "hold", tag: sensor }, { op: "wait", ms: 400 }, { op: "release", tag: sensor }, { op: "wait", ms: 400 });
+    for (let i = 0; i < n; i++) steps.push({ op: "hold", tag: sensor }, { op: "wait", ms: PRESS_MS }, { op: "release", tag: sensor }, { op: "wait", ms: PRESS_MS });
     steps.push({ op: "expect", tag: act, value: false, withinMs: RESPONSE_MS, label: `${act} off after ${n} parts` });
     return [tc(r, "count", `${act} stops after ${n} parts pass ${sensor}`, "state_transition", [sensor, act, ...(start ? [start] : [])], steps)];
   },
 
+  // Routing: parts of ONE class (classifier active, or with classifierValue=false NOT active, e.g. "short boxes =
+  // high sensor off -> left") go to `diverter`; parts of the other class must not. Both classes are presented
+  // with the line running (start pressed when the spec has one) and, when bound, the part-presence `sensor`
+  // held, because a real short box is "presence on, classifier off", not "no box at all".
   sorting: (r) => {
     const [classifier, diverter] = need(r, "classifier", "diverter");
+    const { start, stop, sensor: presence } = r.bindings;
+    const when = classifierValue(r);
+    const selectClass: TestStep = when ? { op: "hold", tag: classifier } : { op: "release", tag: classifier };
+    const otherClass: TestStep = when ? { op: "release", tag: classifier } : { op: "hold", tag: classifier };
+    const part = when ? `A part detected by ${classifier}` : `A part not detected by ${classifier}`;
+    const other = when ? `a part not detected by ${classifier}` : `a part detected by ${classifier}`;
     return [
-      tc(r, "divert", `A part detected by ${classifier} is diverted by ${diverter}`, "sensor_transition", [classifier, diverter], [
-        { op: "expectStable", tag: diverter, value: false, forMs: 800, label: `${diverter} at rest` },
-        { op: "hold", tag: classifier },
-        { op: "expect", tag: diverter, value: true, withinMs: num(r, "delayMs", 0) + RESPONSE_MS, label: `${diverter} actuates` },
+      tc(r, "divert", `${part} is diverted by ${diverter}`, "sensor_transition", [classifier, diverter, ...(presence ? [presence] : []), ...(start ? [start] : [])], [
+        ...stopFirst(stop),
+        // Present the other class first and let it reach the PLC before the line starts, so a correct router
+        // never sees an unclassified instant.
+        ...(presence ? [{ op: "hold", tag: presence } as TestStep] : []),
+        otherClass,
+        { op: "wait", ms: PRESS_MS },
+        ...(start ? [{ op: "press", tag: start, holdMs: PRESS_MS } as TestStep] : []),
+        { op: "expectStable", tag: diverter, value: false, forMs: 1000, label: `${diverter} not actuated for ${other}` },
+        selectClass,
+        { op: "expect", tag: diverter, value: true, withinMs: num(r, "delayMs", 0) + RESPONSE_MS, label: `${diverter} actuates for a part ${when ? "" : "not "}detected by ${classifier}` },
         { op: "release", tag: classifier },
+        ...(presence ? [{ op: "release", tag: presence } as TestStep] : []),
       ]),
     ];
   },
 };
+
+/** Which classifier state selects this route. Default true; `false` (or "false") means NOT detected by it. */
+export function classifierValue(r: BoundRequirement): boolean {
+  const v = r.params.classifierValue;
+  return !(v === false || (typeof v === "string" && v.trim().toLowerCase() === "false"));
+}

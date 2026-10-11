@@ -11,6 +11,7 @@ import LoadingSpinner from '@/client/components/LoadingSpinner';
 import { Seo, type SeoProps } from '@/client/components/Seo';
 import { BrandMark } from '@/client/components/mm/BrandMark';
 import { cn } from '@/client/lib/utils';
+import { displayName } from '@/client/lib/format';
 
 interface PageProps {
   children?: React.ReactNode;
@@ -39,7 +40,7 @@ function Header() {
           </Link>
           {user ? (
             <>
-              <span className="hidden max-w-48 truncate text-[13px] text-plant-400 sm:inline">{user.handle}</span>
+              <span className="hidden max-w-48 truncate text-[13px] text-plant-400 sm:inline">{displayName(user.handle)}</span>
               <Link
                 to="/logout"
                 className="rounded-md border border-plant-600 px-3 py-1.5 text-[13px] text-plant-100 transition-colors hover:bg-plant-800"

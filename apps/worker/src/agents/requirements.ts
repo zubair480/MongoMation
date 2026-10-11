@@ -20,7 +20,7 @@ export const ROLE_GUIDE = `Requirement kinds and the role keys each one uses (us
 - estop: estop, actuator, optional start
 - indicator: start, stop, indicator
 - counter: sensor, actuator, optional start   params: count
-- sorting: classifier, diverter   params: delayMs?
+- sorting: classifier, diverter, optional sensor, start, stop   params: delayMs?, classifierValue? (true|false)   (sensor = part-presence sensor that sees every part, e.g. low sensor; classifierValue false = parts the classifier does NOT detect, e.g. short boxes when the classifier is the high sensor)
 - sequence, mode, other: describe roles freely (these may not be automatically testable)
 Role values are the equipment names as the specification describes them (e.g. "upstream conveyor", "jam photo-eye").`;
 

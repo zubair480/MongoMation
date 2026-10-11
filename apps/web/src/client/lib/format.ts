@@ -51,6 +51,11 @@ export function usd(x: number | undefined, digits = 3): string {
   return x === undefined ? '—' : `$${x.toFixed(digits)}`;
 }
 
+/** Display only: capitalizes each word of a user's name/handle ("zubair" → "Zubair"). */
+export function displayName(s: string): string {
+  return s.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+}
+
 export function upper(s: string | undefined): string {
   return (s ?? 'unknown').replace(/_/g, ' ').toUpperCase();
 }

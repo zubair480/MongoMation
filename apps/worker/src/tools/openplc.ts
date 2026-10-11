@@ -19,6 +19,7 @@ import type { SceneDefinition } from "@mongomation/types";
 import { zipSync, strToU8 } from "fflate";
 import { Agent } from "undici";
 import type { CompileOutcome, PlcRuntime, RuntimeStatus } from "./rig.ts";
+import { parseHeartbeat } from "./linkprobe.ts";
 
 const COMPILE_TIMEOUT_MS = 5 * 60_000;
 const run = promisify(execFile);
@@ -41,6 +42,8 @@ export class OpenPlcRest implements PlcRuntime {
   readonly label: string;
   private token: string | null = null;
   private lastGoodBundle: Uint8Array | null = null;
+  /** The program last compiled OK carries the harness link heartbeat -> start() skips the fixed relink sleep. */
+  private heartbeatLoaded = false;
   private readonly dispatcher?: Agent;
   private readonly base: string;
 
@@ -192,6 +195,7 @@ export class OpenPlcRest implements PlcRuntime {
       logs = Array.isArray(st.logs) ? st.logs : String(st.logs ?? "").split("\n");
       if (st.status === "SUCCESS") {
         if (bundle) this.lastGoodBundle = bundle;
+        this.heartbeatLoaded = parseHeartbeat(source) !== null;
         return { ok: true, log: logs.join("").slice(-6000), durationMs: Math.round(performance.now() - started), runtimeProgram: programName };
       }
       if (st.status === "FAILED") {
@@ -224,8 +228,10 @@ export class OpenPlcRest implements PlcRuntime {
       if (/EMPTY|ERROR/.test(s.detail) || Date.now() > until) throw new Error(`PLC did not reach RUNNING: ${s.detail}`);
       await sleep(200);
     }
-    // The rig's Factory I/O reconnects its Modbus client ~60 s after an upload; measuring earlier would grade a dead link.
-    if (this.v4.relinkMs > 0) await sleep(this.v4.relinkMs);
+    // The rig's Factory I/O reconnects its Modbus client on its own schedule after an upload (measured 6.5 s .. >75 s).
+    // Programs carrying the harness heartbeat are gated by the active probe (tools/linkprobe.ts, called by the
+    // pipeline after start); everything else falls back to the fixed wait.
+    if (this.v4.relinkMs > 0 && !this.heartbeatLoaded) await sleep(this.v4.relinkMs);
   }
 
   async stop() {

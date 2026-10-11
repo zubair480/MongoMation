@@ -19,6 +19,9 @@ const hidden = (r: BoundRequirement, suffix: string, title: string, category: Te
 
 const b = (r: BoundRequirement, role: string) => r.bindings[role];
 
+/** "Already active before start" must really have reached the PLC: the rig's input path needs up to ~1 s. */
+const SETTLE_INPUT_MS = PRESS_MS;
+
 export function hiddenTestsFor(r: BoundRequirement): TestCase[] {
   const out: TestCase[] = [];
   switch (r.kind) {
@@ -28,7 +31,7 @@ export function hiddenTestsFor(r: BoundRequirement): TestCase[] {
       out.push(
         hidden(r, "stop-dominates", "Stop dominates a simultaneous start", "safety", [start, stop, act], [
           { op: "press", tag: stop, holdMs: PRESS_MS },
-          { op: "wait", ms: 300 },
+          { op: "wait", ms: SETTLE_INPUT_MS },
           { op: "hold", tag: stop },
           { op: "hold", tag: start },
           { op: "expectStable", tag: act, value: false, forMs: 1200, label: "no motion while start and stop are both pressed" },
@@ -48,7 +51,7 @@ export function hiddenTestsFor(r: BoundRequirement): TestCase[] {
       out.push(
         hidden(r, "blocked-before-start", "Start is refused while the interlock is already active", "interlock", [act, blocker, start], [
           { op: "hold", tag: blocker },
-          { op: "wait", ms: 500 },
+          { op: "wait", ms: SETTLE_INPUT_MS },
           { op: "press", tag: start, holdMs: PRESS_MS },
           { op: "expectStable", tag: act, value: false, forMs: 2000, label: "no motion into a blocked downstream" },
           { op: "release", tag: blocker },
@@ -94,7 +97,7 @@ export function hiddenTestsFor(r: BoundRequirement): TestCase[] {
       out.push(
         hidden(r, "estop-held", "Start is ignored while the emergency stop is held", "safety", [estop, act, start], [
           { op: "hold", tag: estop },
-          { op: "wait", ms: 300 },
+          { op: "wait", ms: SETTLE_INPUT_MS },
           { op: "press", tag: start, holdMs: PRESS_MS },
           { op: "expectStable", tag: act, value: false, forMs: 1500, label: "no motion with e-stop held" },
           { op: "release", tag: estop },

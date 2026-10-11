@@ -1,0 +1,12 @@
+{
+  "_comment": "Atlas Stream Processing: live job-status feed. Reads the jobs change stream (with pre-images) from the cluster connection `mongomation` and writes per-minute status counts to `job_status_minutely`. Requires a Stream Processing workspace (billed per hour of processor runtime). Apply with infra/atlas/apply.sh.",
+  "name": "jobStatusMinutely",
+  "pipeline": [
+    { "$source": { "connectionName": "mongomation", "db": "mongomation", "coll": "jobs", "config": { "fullDocument": "whenAvailable", "fullDocumentBeforeChange": "whenAvailable" } } },
+    { "$match": { "operationType": { "$in": ["insert", "update"] }, "updateDescription.updatedFields.heartbeatAt": { "$exists": false } } },
+    { "$tumblingWindow": { "interval": { "size": 1, "unit": "minute" }, "pipeline": [
+      { "$group": { "_id": { "type": "$fullDocument.type", "status": "$fullDocument.status" }, "n": { "$sum": 1 } } }
+    ] } },
+    { "$merge": { "into": { "connectionName": "mongomation", "db": "mongomation", "coll": "job_status_minutely" } } }
+  ]
+}

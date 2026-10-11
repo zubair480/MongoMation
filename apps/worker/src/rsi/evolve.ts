@@ -11,6 +11,7 @@ import { currentConfig, getConfig, recordVerdict, storeCandidate } from "../harn
 import { enqueue } from "../harness/jobs.ts";
 import { newProjectId, runEngineering, type EngineerResult } from "../pipeline/engineer.ts";
 import { telemetry } from "../telemetry/index.ts";
+import { raindropEvidence } from "../telemetry/raindrop-query.ts";
 import type { PlcRuntime, Simulator } from "../tools/rig.ts";
 import { decide } from "./gate.ts";
 import { configDiff, guardrailViolations, stripMeta } from "./guardrails.ts";
@@ -19,10 +20,39 @@ import { proposeHarnessChange, type FailureCluster, type MetaEvidence } from "./
 /** Failures need to repeat before they justify a harness change. */
 const MIN_CLUSTER = 2;
 
-export async function collectEvidence(config: HarnessConfig): Promise<MetaEvidence> {
+/**
+ * Explicit, recorded run limits for time-boxed runs (all optional; absent = full benchmark, harness budgets).
+ *   caseLimit    : use only the FIRST N cases of the split, in specs/benchmark.json order (deterministic). The frozen
+ *                  file and its hash are untouched; every row stores `limit` + the case ids actually run.
+ *   maxRepairs   : cap repair rounds per case at min(config.workflow.repair_budget, N) for EVERY condition alike
+ *                  (bare stays 0). Recorded on every row; the stored harness configs are not changed.
+ *   evidenceSince: evolve only — consider failures recorded at/after this time (e.g. after a harness bug fix), so
+ *                  failures caused by since-fixed test bugs or a dead rig link are not fed to the meta-agent.
+ */
+export interface RunLimits {
+  caseLimit?: number;
+  maxRepairs?: number;
+  evidenceSince?: Date;
+}
+
+export function selectCases<T extends { split: string }>(cases: T[], split: "train" | "heldout", caseLimit?: number) {
+  const all = cases.filter((c) => c.split === split);
+  const selected = caseLimit && caseLimit > 0 ? all.slice(0, caseLimit) : all;
+  return { selected, total: all.length, limit: caseLimit && caseLimit > 0 ? caseLimit : null };
+}
+
+export function capRepairs(cfg: HarnessConfig, maxRepairs?: number): HarnessConfig {
+  if (maxRepairs === undefined || maxRepairs < 0 || cfg.workflow.repair_budget <= maxRepairs) return cfg;
+  return { ...cfg, workflow: { ...cfg.workflow, repair_budget: maxRepairs } };
+}
+
+export async function collectEvidence(config: HarnessConfig, evidenceSince?: Date): Promise<MetaEvidence> {
   const failed = await col
     .testResults()
-    .find({ harnessVersion: config.version, verdict: "failed", split: { $ne: "heldout" } }, { projection: { steps: 0, stepLogs: 0 } })
+    .find(
+      { harnessVersion: config.version, verdict: "failed", split: { $ne: "heldout" }, superseded: { $ne: true }, ...(evidenceSince && { startedAt: { $gte: evidenceSince } }) },
+      { projection: { steps: 0, stepLogs: 0 } },
+    )
     .sort({ startedAt: -1 })
     .limit(400)
     .toArray();
@@ -44,8 +74,9 @@ export async function collectEvidence(config: HarnessConfig): Promise<MetaEviden
     const diags = await col.diagnoses().find({ projectId: { $in: [...c.projectSet] }, split: { $ne: "heldout" } }, { sort: { createdAt: -1 }, limit: 3 }).toArray();
     c.diagnoses = diags.map((d) => String(d.summary));
     c.runIds = [...new Set(c.runIds)];
+    c.raindropEventIds = [...new Set(c.raindropEventIds)];
   }
-  const projects = await col.projects().find({ harnessVersion: config.version, status: { $in: ["verified", "partially_verified", "failed"] } }).toArray();
+  const projects = await col.projects().find({ harnessVersion: config.version, status: { $in: ["verified", "partially_verified", "failed"] }, ...(evidenceSince && { createdAt: { $gte: evidenceSince } }) }).toArray();
   const sat = projects.map((p) => {
     const v = (p.verdicts as { status: string }[] | undefined) ?? [];
     const relevant = v.filter((x) => x.status !== "unsupported");
@@ -59,12 +90,15 @@ export async function collectEvidence(config: HarnessConfig): Promise<MetaEviden
     repairsPerProject: projects.length ? projects.reduce((a, p) => a + Math.max(0, Number(p.attempts ?? 1) - 1), 0) / projects.length : 0,
     clusters: clusters.map(({ projectSet: _p, ...c }) => c),
     recentLessons: lessons.map((l) => `${l.pattern} -> ${l.fix}`),
+    // Raindrop Query API: signal counts, failing spans and failure samples across all runs (null = unavailable).
+    raindrop: await raindropEvidence({ log: (m) => console.warn(`rsi: ${m}`) }),
   };
 }
 
-export async function runEvolveRound(args: { jobId: string; config: HarnessConfig; trigger: string }) {
+export async function runEvolveRound(args: { jobId: string; config: HarnessConfig; trigger: string; limits?: RunLimits }) {
   const parent = args.config;
-  const evidence = { ...(await collectEvidence(parent)), trigger: args.trigger };
+  const limits = args.limits ?? {};
+  const evidence = { ...(await collectEvidence(parent, limits.evidenceSince)), trigger: args.trigger, evidenceSince: limits.evidenceSince?.toISOString() ?? null };
   const repeated = evidence.clusters.filter((c) => c.count >= MIN_CLUSTER);
   const base = { createdAt: new Date(), jobId: args.jobId, fromVersion: parent.version, trigger: args.trigger, evidenceSummary: evidence };
   if (!repeated.length) {
@@ -93,7 +127,12 @@ export async function runEvolveRound(args: { jobId: string; config: HarnessConfi
   // a worker woken by the jobs change stream never sees the benchmark job before its candidate exists.
   const { candidate, benchmarkJobId, proposalId } = await withTxn(async (session) => {
     const candidate = await storeCandidate(parent, p.config as never, p.rationale, evidenceRefs, session);
-    const benchmarkJobId = await enqueue({ type: "benchmark", origin: "script" }, { candidateVersion: candidate.version }, session);
+    // The gate benchmark inherits the evolve job's explicit limits (recorded on the job and on every row).
+    const benchmarkJobId = await enqueue(
+      { type: "benchmark", origin: "script" },
+      { candidateVersion: candidate.version, ...(limits.caseLimit && { caseLimit: limits.caseLimit }), ...(limits.maxRepairs !== undefined && { maxRepairs: limits.maxRepairs }) },
+      session,
+    );
     const doc = await col.proposals().insertOne({ ...base, change: true, verdict: "pending", candidateVersion: candidate.version, rationale: p.rationale, expectedEffect: p.expectedEffect, citedRunIds: cited, diff, guardrailViolations: [], metaTraceId: meta.traceId, benchmarkJobId: String(benchmarkJobId), provenance: "live" }, { session });
     return { candidate, benchmarkJobId, proposalId: String(doc.insertedId) };
   });
@@ -142,7 +181,16 @@ function score(results: { r: EngineerResult; safety: [number, number]; tests: [n
   };
 }
 
-async function runCase(c: BenchmarkCase, config: HarnessConfig, condition: string, scene: SceneDefinition, deps: { plc: PlcRuntime; sim: Simulator; rigId: string }, benchmarkId: string) {
+async function runCase(
+  c: BenchmarkCase,
+  harness: HarnessConfig,
+  condition: string,
+  scene: SceneDefinition,
+  deps: { plc: PlcRuntime; sim: Simulator; rigId: string },
+  benchmarkId: string,
+  run: { limit: number | null; caseIds: string[]; maxRepairs?: number },
+) {
+  const config = capRepairs(harness, run.maxRepairs);
   const projectId = newProjectId();
   await col.projects().insertOne({ _id: projectId as never, specText: c.specText, sceneId: scene.id, status: "running", harnessVersion: config.version, origin: "benchmark", benchmarkId, caseId: c.id, condition, createdAt: new Date() });
   const r = await runEngineering({ projectId, jobId: benchmarkId, specText: c.specText, scene, config, heldOut: c.split === "heldout", evaluationRequirements: c.requirements }, deps);
@@ -156,12 +204,15 @@ async function runCase(c: BenchmarkCase, config: HarnessConfig, condition: strin
     tests: [results.filter((t) => t.verdict === "passed").length, results.length] as [number, number],
     satisfaction: supported ? verified / supported : 0,
   };
-  await col.benchmarks().insertOne({ benchmarkId, harnessVersion: config.version, condition, caseId: c.id, split: c.split, projectId, metrics: { satisfaction: row.satisfaction, safety: row.safety, tests: row.tests, attempts: r.attempts, firstCompileOk: r.firstCompileOk, costUsd: r.costUsd, seconds: r.seconds, status: r.status }, createdAt: new Date() });
+  await col.benchmarks().insertOne({
+    benchmarkId, harnessVersion: config.version, condition, caseId: c.id, split: c.split, projectId,
+    limit: run.limit, caseIds: run.caseIds, maxRepairs: run.maxRepairs ?? null, repairBudgetUsed: config.workflow.repair_budget, repairBudgetConfigured: harness.workflow.repair_budget,
+    metrics: { satisfaction: row.satisfaction, safety: row.safety, tests: row.tests, attempts: r.attempts, firstCompileOk: r.firstCompileOk, costUsd: r.costUsd, seconds: r.seconds, status: r.status }, createdAt: new Date() });
   return row;
 }
 
 export async function runBenchmarkJob(
-  args: { jobId: string; candidateVersion?: number },
+  args: { jobId: string; candidateVersion?: number; limits?: RunLimits },
   deps: { plc: PlcRuntime; sim: Simulator; rigId: string; loadScene: (id?: string) => Promise<SceneDefinition> },
 ) {
   const { cases, hash } = await loadFrozenBenchmark();
@@ -172,25 +223,33 @@ export async function runBenchmarkJob(
     await recordVerdict(candidate.version, { verdict: "rejected", gateNote: `stale: proposed from v${candidate.parent}, current is v${parent.version}` });
     return { verdict: "rejected", reason: "stale parent" };
   }
-  const train = cases.filter((c) => c.split === "train");
+  const { selected: train, total, limit } = selectCases(cases, "train", args.limits?.caseLimit);
+  const maxRepairs = args.limits?.maxRepairs;
+  const subset = { limit, caseIds: train.map((c) => c.id), totalCases: total, maxRepairs: maxRepairs ?? null };
+  const run = { limit, caseIds: subset.caseIds, maxRepairs };
   const rows: Record<string, Awaited<ReturnType<typeof runCase>>[]> = { parent: [], candidate: [] };
   for (const c of train) {
     const scene = await deps.loadScene(c.sceneId);
-    rows.parent.push(await runCase(c, parent, `v${parent.version}`, scene, deps, args.jobId));
-    if (candidate) rows.candidate.push(await runCase(c, candidate, `v${candidate.version}`, scene, deps, args.jobId));
+    rows.parent.push(await runCase(c, parent, `v${parent.version}`, scene, deps, args.jobId, run));
+    if (candidate) rows.candidate.push(await runCase(c, candidate, `v${candidate.version}`, scene, deps, args.jobId, run));
   }
   const parentScores = score(rows.parent);
-  if (!candidate) return { manifestHash: hash, parentScores };
+  if (!candidate) {
+    await col.benchmarks().insertOne({ benchmarkId: args.jobId, kind: "benchmark_summary", manifestHash: hash, split: "train", ...subset, harnessVersion: parent.version, scores: { [`v${parent.version}`]: parentScores }, createdAt: new Date() });
+    return { manifestHash: hash, ...subset, parentScores };
+  }
   const candidateScores = score(rows.candidate);
-  const d = decide(candidateScores, parentScores);
+  const decision = decide(candidateScores, parentScores);
+  // Honest labelling: a limited run says so in the gate note itself, not only in a side field.
+  const d = limit ? { ...decision, reasons: [...decision.reasons, `subset: first ${train.length} of ${total} frozen train cases (limit=${limit}: ${subset.caseIds.join(", ")})${maxRepairs !== undefined ? `, repairs capped at ${maxRepairs}` : ""}`] } : decision;
   // ONE transaction: the harness version's verdict (which decides what currentConfig() returns, i.e. which harness
   // every later job runs) and the proposal's verdict shown on the dashboard can never disagree.
   await withTxn(async (session) => {
     await recordVerdict(candidate.version, { verdict: d.verdict, scores: candidateScores, parentScores, gateNote: d.reasons.join("; ") }, session);
-    await col.proposals().updateOne({ candidateVersion: candidate.version }, { $set: { verdict: d.verdict, scores: candidateScores, parentScores, gateNote: d.reasons.join("; "), decidedAt: new Date(), manifestHash: hash } }, { session });
+    await col.proposals().updateOne({ candidateVersion: candidate.version }, { $set: { verdict: d.verdict, scores: candidateScores, parentScores, gateNote: d.reasons.join("; "), decidedAt: new Date(), manifestHash: hash, benchmarkSubset: subset } }, { session });
   });
-  telemetry.signal({ runId: `benchmark-${args.jobId}`, name: d.verdict === "kept" ? "harness_change_kept" : "harness_change_rolled_back", properties: { version: candidate.version } });
-  return { manifestHash: hash, verdict: d.verdict, reasons: d.reasons, parentScores, candidateScores };
+  telemetry.signal({ runId: `benchmark-${args.jobId}`, name: d.verdict === "kept" ? "harness_change_kept" : "harness_change_rolled_back", properties: { version: candidate.version, cases: train.length } });
+  return { manifestHash: hash, ...subset, verdict: d.verdict, reasons: d.reasons, parentScores, candidateScores };
 }
 
 // --------------------------------------------------------------------------------------------------------
@@ -216,11 +275,13 @@ export function bareCondition(v0: HarnessConfig): HarnessConfig {
 }
 
 export async function runAblationJob(
-  args: { jobId: string },
+  args: { jobId: string; limits?: RunLimits },
   deps: { plc: PlcRuntime; sim: Simulator; rigId: string; loadScene: (id?: string) => Promise<SceneDefinition> },
 ) {
   const { cases, hash } = await loadFrozenBenchmark();
-  const heldout = cases.filter((c) => c.split === "heldout");
+  const { selected: heldout, total, limit } = selectCases(cases, "heldout", args.limits?.caseLimit);
+  const maxRepairs = args.limits?.maxRepairs;
+  const subset = { limit, caseIds: heldout.map((c) => c.id), totalCases: total, maxRepairs: maxRepairs ?? null };
   if (!heldout.length) throw new Error("benchmark has no held-out cases");
   const v0 = await getConfig(0);
   if (!v0) throw new Error("harness v0 missing in Atlas; run npm run seed");
@@ -230,9 +291,9 @@ export async function runAblationJob(
   const rows: Record<string, Awaited<ReturnType<typeof runCase>>[]> = Object.fromEntries(conditions.map(([k]) => [k, []]));
   for (const c of heldout) {
     const scene = await deps.loadScene(c.sceneId);
-    for (const [name, cfg] of conditions) rows[name].push(await runCase(c, cfg, `ablation:${name}`, scene, deps, args.jobId));
+    for (const [name, cfg] of conditions) rows[name].push(await runCase(c, cfg, `ablation:${name}`, scene, deps, args.jobId, { limit, caseIds: subset.caseIds, maxRepairs }));
   }
   const scores = Object.fromEntries(Object.entries(rows).map(([k, v]) => [k, score(v)]));
-  await col.benchmarks().insertOne({ benchmarkId: args.jobId, kind: "ablation_summary", manifestHash: hash, split: "heldout", model: { fast: process.env.MODEL_FAST ?? null, strong: process.env.MODEL_STRONG ?? null }, scores, createdAt: new Date() });
-  return { manifestHash: hash, cases: heldout.map((c) => c.id), scores };
+  await col.benchmarks().insertOne({ benchmarkId: args.jobId, kind: "ablation_summary", manifestHash: hash, split: "heldout", ...subset, model: { fast: process.env.MODEL_FAST ?? null, strong: process.env.MODEL_STRONG ?? null }, scores, createdAt: new Date() });
+  return { manifestHash: hash, cases: subset.caseIds, ...subset, scores };
 }
