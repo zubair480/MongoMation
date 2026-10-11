@@ -236,7 +236,7 @@ npm run launcher       # worker under the launcher (needed for Interrupt Worker 
 
 Then use the dashboard (https://mongomation-mv43qiu7n6f-prod.cloud.modelence.app) or the CLI equivalents:
 `npm run example`, `npm run fault`, `npm run evolve`, `npm run benchmark`, `npm run ablation`, `npm run ledger`.
-See `docs/DEMO_RUNBOOK.md` for the recorded demo order.
+See `docs/DEMO.md` for the demo script and operator checklist.
 
 ## Troubleshooting
 

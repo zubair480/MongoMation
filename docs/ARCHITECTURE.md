@@ -59,6 +59,10 @@ flowchart LR
    compile/repair/cost improve → **KEPT** (becomes current); otherwise **ROLLED BACK**.
 6. **Ablation** on held-out cases: bare one-shot model vs harness v0 vs evolved vN (same model).
 
+**Status (2026-10-11):** 9 proposals in Atlas: 7 NO CHANGE and 2 REJECTED by the schema guardrail (a proposed rule
+exceeded the 400-character limit; the meta-agent prompt now states the limit, not yet re-run). No harness change has been KEPT by the gate yet. Harness
+v1 and v2 are operator seed and restore versions, not gate decisions.
+
 ## 4. Long-horizon durability
 
 - `jobs`: atomic claim, 3 s heartbeats, stale (15 s) jobs re-queued with `resumedFrom`.
@@ -74,9 +78,20 @@ flowchart LR
 ## 5. Data model (Atlas, db `mongomation`)
 
 `projects, jobs, stages, events, requirements, plc_versions, compile_results, deployments, sim_runs, test_results,
-measurements (time series), fault_injections, diagnoses, repairs, lessons (vector), harness_versions,
-rsi_proposals, benchmark_runs, benchmark_manifests, workers, scenes, rig_locks, rig_status, trace_refs`.
-Vector Search: `lessons_vec`, `diagnoses_vec` (Voyage embeddings; retrieval falls back to recency without a key).
+measurements (time series), fault_injections, diagnoses, repairs, lessons, verified_programs, harness_versions,
+rsi_proposals, benchmark_runs, benchmark_manifests, workers, scenes, rig_locks, rig_status, trace_refs,
+change_stream_tokens, job_transitions, audit_log`. Field-level reference: the README's "Data model" section.
+Vector Search (Atlas `autoEmbed`, Voyage): `lessons_vec`, `diagnoses_vec`, `verified_programs_vec`. Atlas Search:
+`lessons_search`, `diagnoses_search`, `verified_programs_search`. Fused with `$rankFusion`; retrieval falls back to
+client-side fusion, then recency.
+
+### Experience recall (before codegen)
+
+`apps/worker/src/harness/recall.ts` looks for a proven program in `verified_programs`: same normalized spec text
+(`exact-spec`, no Claude calls), same requirement fingerprint (`exact`), or a hybrid-search near match (`near`,
+memory-guided codegen). An exact hit is re-confirmed on the rig with one full test pass. Only with `RECALL_TRUST=1`
+and a matching test-plan hash is the rig skipped, and the project is then labeled `verified-by-reuse`, never
+`verified`.
 
 ## 6. Sponsors, used for real
 
@@ -87,9 +102,9 @@ Vector Search: `lessons_vec`, `diagnoses_vec` (Voyage embeddings; retrieval fall
 | AWS | rig on EC2 (OpenPLC Runtime v4 + Factory I/O), reached through the team HTTPS gateway; deterministic gate (hidden grader + regression tests + `rsi/gate.ts`) around the LLM; flag-gated AWS SDK modules (`apps/worker/src/aws/`: S3 artifacts, CloudWatch metrics/logs/alarms, SSM health probe) and a CloudFormation template in `infra/aws/` — not deployed unless the flags are set |
 | Modelence | the deployed dashboard: live queries over change streams (no polling), channels, cron jobs (rig/job watch, ops digest), Stores, rate limits, roles + verified-email guards, telemetry, `@modelence/ai` failure explanations |
 
-## 7. Raindrop Workshop: local debugger + evals (free tier)
+## 7. Raindrop Workshop: local debugger + evals
 
-We are on Raindrop's free (Hobby, ~1,000 cloud events/month) tier: no hosted Evals/Experiments. Evals run in
+Hosted Raindrop Evals returned 403 on our org, so evals run in
 [Raindrop Workshop](https://github.com/raindrop-ai/workshop) (MIT, local daemon + UI on `localhost:5899`, SQLite at
 `~/.raindrop/raindrop_workshop.db`).
 
@@ -116,8 +131,8 @@ We are on Raindrop's free (Hobby, ~1,000 cloud events/month) tier: no hosted Eva
   mean, budget ok, verified, cost per verified project). Each run gets a Workshop annotation (`issue`/`good`,
   prefixed `[workshop-eval]`); `WORKSHOP_EVAL_STRICT=1` exits 1 on any failing assertion. The old hosted-Evals suite
   is `deprecated:raindrop:eval:hosted`.
-- **Self-healing loop** (Raindrop cookbook): `.mcp.json` registers the Workshop MCP (`raindrop workshop mcp`) for
-  coding agents. Loop: `npm run workshop:eval` → in the agent, `query_traces` (`SELECT run_id, note FROM annotations
+- **Self-healing loop** (Raindrop cookbook): register the Workshop MCP (`raindrop workshop mcp`) for coding agents
+  in a local `.mcp.json` (gitignored, so it is not in the repo; create it with `claude mcp add -s project`). Loop: `npm run workshop:eval` → in the agent, `query_traces` (`SELECT run_id, note FROM annotations
   WHERE kind='issue'`) → `get_run_outline` / `search_run` / `get_span_payload` on the failing `simulator_test` spans
   (`import_cloud_trace` for any other cloud event id) → write a failing check, fix the harness or pipeline, re-run the
   job and `workshop:eval` until the assertion passes → PR. The RSI meta-agent keeps reading cloud signals through the

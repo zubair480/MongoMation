@@ -2,6 +2,10 @@
 
 Version 1 · 2026-10-11 · Owners: both. Change it only together; note the change at the bottom.
 
+> This is the working contract the two developers built the rig against on the day. The rig is now built and is
+> reached through the team HTTPS gateway (see [`SETUP.md`](SETUP.md) §5.0); the topology and API sequences below
+> remain the reference for how the worker talks to OpenPLC and Factory I/O.
+
 **Goal:** both developers work in parallel. Developer 1 delivers a private, reachable **rig** (Factory I/O + OpenPLC +
 Modbus + DCV) and a **verified scene registry**. Developer 2's worker drives it over HTTP only. Nothing here is
 public except the DCV viewer (team IPs only) and the Modelence dashboard.
