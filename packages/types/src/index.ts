@@ -325,7 +325,7 @@ export interface RequirementVerdict {
 // Jobs: what the dashboard asks the worker to do (the only collection the web app writes).
 // ---------------------------------------------------------------------------------------------
 
-export const JobType = z.enum(["engineer", "fault_and_improve", "evolve", "benchmark", "spec_change", "worker_command"]);
+export const JobType = z.enum(["engineer", "fault_and_improve", "evolve", "benchmark", "ablation", "spec_change", "worker_command"]);
 export type JobType = z.infer<typeof JobType>;
 export const JobStatus = z.enum(["queued", "running", "verifying", "completed", "failed", "blocked", "interrupted"]);
 export type JobStatus = z.infer<typeof JobStatus>;

@@ -23,7 +23,7 @@ Open: the Modelence dashboard, the DCV 3D view, and the Raindrop project page.
 ## Before freeze (≈15:00)
 1. `npm run benchmark` — baseline scores of the current harness on the frozen train cases (stored, labeled).
 2. `npm run evolve` — at least one real proposal + verdict (a ROLLED BACK or REJECTED verdict is valid evidence).
-3. Optional ablation on held-out cases: bare one-shot vs v0 vs vN (same model).
+3. `npm run ablation` — held-out cases: bare one-shot vs v0 vs vN (same model, same grader); rows in `benchmark_runs`.
 4. Record a full backup run.
 
 ## If something breaks live

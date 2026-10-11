@@ -182,3 +182,47 @@ export async function runBenchmarkJob(
   telemetry.signal({ runId: `benchmark-${args.jobId}`, name: d.verdict === "kept" ? "harness_change_kept" : "harness_change_rolled_back", properties: { version: candidate.version } });
   return { manifestHash: hash, verdict: d.verdict, reasons: d.reasons, parentScores, candidateScores };
 }
+
+// --------------------------------------------------------------------------------------------------------
+// Ablation: held-out cases only, same model, same scene, same independent grader, three conditions.
+//   bare : one-shot generator — no rules, no retrieved lessons/failures, no state machine, no preflight,
+//          no repair attempts. A fixed control: never stored as a harness version, never made current.
+//   v0   : the baseline harness.
+//   vN   : the current kept harness (skipped while it is still v0).
+// Rows go to benchmark_runs with condition "ablation:<name>"; the summary row has kind "ablation_summary".
+// --------------------------------------------------------------------------------------------------------
+
+export function bareCondition(v0: HarnessConfig): HarnessConfig {
+  return {
+    ...v0,
+    version: -1,
+    parent: null,
+    rules: [],
+    context: { ...v0.context, lessons_k: 0, retrieve_similar_failures: false, failures_k: 0, include_previous_attempt: false },
+    workflow: { ...v0.workflow, state_machine_before_code: false, preflight_compile: false, repair_budget: 0 },
+    repair: { strategy: "full_rewrite", isolate_failing_requirements: false },
+    rationale: "Ablation control: bare one-shot generator (same model routing as v0).",
+  };
+}
+
+export async function runAblationJob(
+  args: { jobId: string },
+  deps: { plc: PlcRuntime; sim: Simulator; rigId: string; loadScene: (id?: string) => Promise<SceneDefinition> },
+) {
+  const { cases, hash } = await loadFrozenBenchmark();
+  const heldout = cases.filter((c) => c.split === "heldout");
+  if (!heldout.length) throw new Error("benchmark has no held-out cases");
+  const v0 = await getConfig(0);
+  if (!v0) throw new Error("harness v0 missing in Atlas; run npm run seed");
+  const current = await currentConfig();
+  const conditions: [string, HarnessConfig][] = [["bare", bareCondition(v0)], ["v0", v0]];
+  if (current.version !== 0) conditions.push([`v${current.version}`, current]);
+  const rows: Record<string, Awaited<ReturnType<typeof runCase>>[]> = Object.fromEntries(conditions.map(([k]) => [k, []]));
+  for (const c of heldout) {
+    const scene = await deps.loadScene(c.sceneId);
+    for (const [name, cfg] of conditions) rows[name].push(await runCase(c, cfg, `ablation:${name}`, scene, deps, args.jobId));
+  }
+  const scores = Object.fromEntries(Object.entries(rows).map(([k, v]) => [k, score(v)]));
+  await col.benchmarks().insertOne({ benchmarkId: args.jobId, kind: "ablation_summary", manifestHash: hash, split: "heldout", model: { fast: process.env.MODEL_FAST ?? null, strong: process.env.MODEL_STRONG ?? null }, scores, createdAt: new Date() });
+  return { manifestHash: hash, cases: heldout.map((c) => c.id), scores };
+}

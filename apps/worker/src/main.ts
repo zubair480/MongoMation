@@ -11,7 +11,7 @@ import { claimNext, heartbeat, HEARTBEAT_MS, pendingCommand, recoverStale, setSt
 import { BlockedError, event } from "./harness/stages.ts";
 import { runEngineering, newProjectId } from "./pipeline/engineer.ts";
 import { runFaultAndImprove } from "./pipeline/fault.ts";
-import { runEvolveRound, runBenchmarkJob } from "./rsi/evolve.ts";
+import { runEvolveRound, runBenchmarkJob, runAblationJob } from "./rsi/evolve.ts";
 import { initTelemetry, telemetry } from "./telemetry/index.ts";
 import { createRig } from "./tools/connect.ts";
 
@@ -149,6 +149,8 @@ async function dispatch(type: JobType, job: JobDoc, jobId: string) {
       return runEvolveRound({ jobId, config, trigger: "manual evolve job" });
     case "benchmark":
       return runBenchmarkJob({ jobId, candidateVersion: (job as unknown as { candidateVersion?: number }).candidateVersion }, { ...rig, rigId, loadScene });
+    case "ablation":
+      return runAblationJob({ jobId }, { ...rig, rigId, loadScene });
     default:
       throw new Error(`job type ${type} not handled by this worker`);
   }

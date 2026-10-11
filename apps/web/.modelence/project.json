@@ -1,0 +1,8 @@
+{
+  "appId": "6acbc863fa49c2861882bfdd",
+  "deploy": {
+    "environmentId": "6acbc866fa49c2861882bfdf",
+    "appAlias": "mongomation-mv43qiu7n6f",
+    "envAlias": "prod"
+  }
+}
