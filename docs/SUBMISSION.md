@@ -103,7 +103,8 @@ Source: Atlas (`scripts/learning-curve.ts`, read-only) and the team board. Times
 |---|---|---|---|---|---|---|
 | 1 cold (memory off), project `6acc077046845cd7abc6ea90` | none | VERIFIED first try | 25/25 | 290 s (tests 226 s = 78%) | $0.073 | 0 |
 | 2 (memory on) | NEAR: fuzzy match to a different spec | VERIFIED | 16/16 | 381 s | $0.181 | 1 |
-| 3 exact-spec recall (same spec, zero Claude calls, proven program reused) | **TODO** | **TODO** | **TODO** | **TODO** | **TODO** | **TODO** |
+| 3 exact-spec recall (same spec, zero Claude calls, proven program reused), project `6acc0e1816da31e31e8b981b` | trusted-spec, source = run 1 | VERIFIED-BY-REUSE (not re-tested; cites run 1's 25/25) | – | **1 s** | **$0** | 0 |
+| 4 repeat of run 3, project `6acc0e4c16da31e31e8b9825` | trusted-spec (75 ms lookup) | VERIFIED-BY-REUSE | – | **0 s** | **$0** | 0 |
 
 Honest reading:
 - Run 2 was slower and dearer than run 1. The fuzzy (NEAR) recall did not help: it matched a different spec, codegen
@@ -111,8 +112,13 @@ Honest reading:
   why we added spec-level exact recall (run 3).
 - What did help in run 2: the targeted re-test of only the failed test took **9.7 s vs 146 s** for a full pass, a
   15× faster repair round, driven by Atlas failure history and experience-ordered tests.
-- Run 3 result: **TODO: fill from Atlas / LEARNING_CURVE.md once run 3 finishes (status, time, cost, Claude calls,
-  whether it was a confirmation pass or `verified-by-reuse`).**
+- Run 3: the same spec text was recognised in Atlas by spec hash in 291 ms; zero Claude calls; the rig-proven program
+  from run 1 was reused, but only because its stored test-plan hash matched today's plan. Status is `verified-by-reuse`
+  (it was not re-tested in that job). Learning curve on this spec: **290 s → 1 s, $0.073 → $0**.
+- RSI rule proposals: after the oracle fix, the meta-agent proposed a new engineering rule twice from a repeated
+  failure (4× across 2 projects: stop/E-stop-named transfer actuators gated by a sensor instead of run/enable). Both
+  proposals were rejected by the guardrail for exceeding the 400-character rule limit, a prompt bug we then fixed. No
+  rule has yet been KEPT by the gate.
 
 The planned bare-model vs harness ablation produced no scores: gateway sampling gaps blocked whole cases, and we chose
 not to report numbers we did not measure.
@@ -125,7 +131,7 @@ not to report numbers we did not measure.
 | 0:08–0:20 | Requirements → I/O → generated ST with the harness-written I/O block | "Claude writes the logic. The harness writes every I/O address, so the model can't invent one." |
 | 0:20–0:32 | STruC++ build, OpenPLC RUNNING, link probe up in seconds, Factory I/O moving, test verdicts | "It's built, deployed to OpenPLC on AWS and tested on Factory I/O with hidden tests. No data means blocked, not passed." |
 | 0:32–0:44 | Repair round: targeted re-test 9.7 s vs full pass 146 s; lessons from the change stream | "Atlas failure history re-runs only what failed, and successful repairs become lessons." |
-| 0:44–0:54 | Run 3 exact-spec recall (**TODO: result**); Raindrop learning-curve dashboard | "Same spec again: Atlas recalls the proven program instead of regenerating it." |
+| 0:44–0:54 | Run 3 exact-spec recall: 1 s, $0, 0 Claude calls (vs 290 s cold); Raindrop learning-curve dashboard | "Same spec again: Atlas recalls the proven program instead of regenerating it." |
 | 0:54–1:00 | RSI card: proposals, all NO CHANGE, oracle diagnosis | "The harness can rewrite itself, but only if a benchmark proves it. Today it rightly declined." |
 
 ## 8. Status (2026-10-11, update before submitting)
@@ -133,7 +139,7 @@ not to report numbers we did not measure.
 - Rig: OpenPLC v4 + Factory I/O on AWS, reached through the team's HTTPS gateway; smoke checks green during today's
   runs.
 - Tests: the repo's unit suite passed on the latest board reports (183/183).
-- **TODO:** run 3 result (§6) and video link (top).
+- **TODO:** video link (top).
 
 ## 9. Honest limits
 

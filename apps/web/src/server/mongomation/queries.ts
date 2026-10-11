@@ -475,6 +475,7 @@ export async function rsi() {
                 createdAt: 1,
                 decidedAt: 1,
                 scores: 1,
+                restoredFrom: 1,
                 rulesCount: { $size: { $ifNull: ['$rules', []] } },
               },
             },
@@ -491,11 +492,55 @@ export async function rsi() {
         proposals.countDocuments({}),
       ]);
       const latestProposal = proposalDoc ? toProposal(proposalDoc) : null;
-      const candidateDoc =
+      const activeParent = num(activeDoc?.parent);
+      const [candidateDoc, parentDoc, recentDocs, citedRunDocs] = await Promise.all([
         latestProposal?.candidateVersion !== undefined
-          ? await harness.findOne({ version: latestProposal.candidateVersion }, { projection: { _id: 0 } })
-          : null;
+          ? harness.findOne({ version: latestProposal.candidateVersion }, { projection: { _id: 0 } })
+          : null,
+        activeParent !== undefined ? harness.findOne({ version: activeParent }, { projection: { _id: 0, rules: 1 } }) : null,
+        proposals
+          .find({}, { projection: { verdict: 1, createdAt: 1, fromVersion: 1, diff: 1, rationale: 1 } })
+          .sort({ createdAt: -1, _id: -1 })
+          .limit(5)
+          .toArray(),
+        latestProposal?.citedRunIds.length
+          ? db
+              .collection('sim_runs')
+              .find({ _id: { $in: latestProposal.citedRunIds.flatMap((id) => { const f = idFilter(id); return typeof f === 'string' ? [f] : f.$in; }) } } as Document, {
+                projection: { projectId: 1 },
+              })
+              .toArray()
+          : [],
+      ]);
+      // Rules diff of the active (kept) version vs its parent — never a proposal's diff.
+      let activeRuleDiff: string[] | undefined;
+      if (activeDoc && (activeParent === undefined || parentDoc)) {
+        const now = strArr(activeDoc.rules);
+        const before = strArr(parentDoc?.rules);
+        activeRuleDiff = [
+          ...before.filter((r) => !now.includes(r)).map((r) => `- rules: ${JSON.stringify(clip(r, 600))}`),
+          ...now.filter((r) => !before.includes(r)).map((r) => `+ rules: ${JSON.stringify(clip(r, 600))}`),
+        ];
+      }
+      const citedRunProjects: Record<string, string> = {};
+      for (const r of citedRunDocs) {
+        const pid = str(r.projectId) ?? (r.projectId ? idOf(r.projectId) : undefined);
+        if (pid) citedRunProjects[idOf(r._id)] = pid;
+      }
+      const recentProposals = recentDocs.map((d) => {
+        const diff = Array.isArray(d.diff) ? strArr(d.diff) : (str(d.diff)?.split('\n') ?? []);
+        return {
+          id: idOf(d._id),
+          createdAt: date(d.createdAt),
+          verdict: str(d.verdict),
+          fromVersion: num(d.fromVersion),
+          summary: clip(diff[0] ?? str(d.rationale), 160),
+        };
+      });
       return {
+        activeRuleDiff,
+        citedRunProjects,
+        recentProposals,
         active: activeDoc ? toHarnessDetail(activeDoc) : null,
         versions: historyDocs.map(toHarnessVersion),
         latestProposal,

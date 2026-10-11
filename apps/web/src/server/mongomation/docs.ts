@@ -477,6 +477,7 @@ export function toHarnessVersion(d: Document): HarnessVersionLite {
     decidedAt: date(d.decidedAt),
     rulesCount: num(d.rulesCount) ?? (Array.isArray(d.rules) ? d.rules.length : 0),
     hasScores: !!toScores(d.scores),
+    restoredFrom: num(d.restoredFrom),
   };
 }
 
@@ -526,5 +527,40 @@ export function toProposal(d: Document): ProposalLite {
     verdict: str(d.verdict),
     benchmarkIds: strArr(d.benchmarkIds),
     provenance: str(d.provenance),
+    jobId: str(d.jobId) ?? (d.jobId ? idOf(d.jobId) : undefined),
+    trigger: clip(str(d.trigger), 200),
+    evidence: toProposalEvidence(d.evidenceSummary),
+  };
+}
+
+// Evidence the proposer saw. Test-result ids are deliberately NOT forwarded (they can reference hidden tests);
+// free text is scrubbed of hidden-test-id patterns.
+function toProposalEvidence(v: unknown): ProposalLite['evidence'] {
+  const e = obj(v);
+  if (!e) return undefined;
+  const rd = obj(e.raindrop);
+  return {
+    harnessVersion: num(e.harnessVersion),
+    projects: num(e.projects),
+    requirementSatisfaction: num(e.requirementSatisfaction),
+    clusters: objArr(e.clusters)
+      .slice(0, 12)
+      .map((c) => ({
+        pattern: redactHidden(clip(str(c.pattern), 300)) ?? '—',
+        count: num(c.count) ?? 0,
+        projects: num(c.projects),
+        runIds: strArr(c.runIds).slice(0, 20),
+        raindropEvents: strArr(c.raindropEventIds).length,
+      })),
+    raindrop: rd
+      ? {
+          source: str(rd.source),
+          windowDays: num(rd.windowDays),
+          totalEvents: num(rd.totalEvents),
+          signals: objArr(rd.signals)
+            .slice(0, 10)
+            .map((s) => ({ name: clip(str(s.name), 120) ?? '—', sentiment: str(s.sentiment), events: num(s.events) ?? 0 })),
+        }
+      : undefined,
   };
 }
