@@ -8,17 +8,20 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { col, connect } from "./db/index.ts";
 import { currentConfig } from "./harness/config.ts";
 import { claimNext, heartbeat, HEARTBEAT_MS, pendingCommand, recoverStale, setStatus, workerBeat, workerId, type JobDoc } from "./harness/jobs.ts";
+import { commandArrived, jobArrived, watchHarnessImmutability, watchJobs, watchJobTransitions } from "./harness/jobwatch.ts";
 import { BlockedError, event } from "./harness/stages.ts";
-import { runEngineering, newProjectId } from "./pipeline/engineer.ts";
+import { runEngineering, newProjectId, redactRigHost } from "./pipeline/engineer.ts";
 import { runFaultAndImprove } from "./pipeline/fault.ts";
-import { runEvolveRound, runBenchmarkJob, runAblationJob } from "./rsi/evolve.ts";
-import { initTelemetry, telemetry } from "./telemetry/index.ts";
+import { runEvolveRound, runBenchmarkJob, runAblationJob, type RunLimits } from "./rsi/evolve.ts";
+import { harnessFlags, initTelemetry, telemetry } from "./telemetry/index.ts";
 import { createRig } from "./tools/connect.ts";
+import { awsAfterJob, initAws } from "./aws/index.ts";
 
 const log = (m: string) => console.log(`${new Date().toISOString().slice(11, 19)} [${workerId()}] ${m}`);
 
 await connect();
 await initTelemetry(log);
+await initAws(log); // MM_AWS_* flags: S3 artifacts, CloudWatch, SSM secrets + rig health (no-op when unset)
 const rig = createRig(); // throws with a clear message when OPENPLC_URL / FACTORYIO_URL are missing
 const rigId = process.env.RIG_ID || "rig-1";
 log(`worker up: ${rig.plc.label} | ${rig.sim.label}`);
@@ -73,9 +76,12 @@ void (async () => {
       log("INTERRUPT requested from the dashboard: exiting now without cleanup (simulated crash)");
       process.exit(137);
     }
-    await sleep(1000);
+    await commandArrived.wait(1000); // change stream wakes this at once; 1 s poll is the fallback
   }
 })();
+watchJobs(log);
+watchJobTransitions(log); // status audit from pre/post images -> job_transitions
+watchHarnessImmutability(log); // decided harness versions must never change -> audit_log
 
 // --- job loop ---------------------------------------------------------------------------------------------
 for (;;) {
@@ -84,7 +90,7 @@ for (;;) {
   const raw = await claimNext();
   if (!raw) {
     await workerBeat(null).catch(() => {});
-    await sleep(1500);
+    await jobArrived.wait(1500); // woken by the jobs change stream on insert; 1.5 s poll is the fallback
     continue;
   }
   const job = raw as unknown as JobDoc;
@@ -96,15 +102,30 @@ for (;;) {
     await setStatus(job._id, "completed", { result });
     log(`completed ${job.type} ${jobId}`);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = redactRigHost(err instanceof Error ? err.message : String(err));
     const blocked = err instanceof BlockedError;
     await setStatus(job._id, blocked ? "blocked" : "failed", { error: message });
-    if (job.projectId) await event(job.projectId, jobId, null, "error", `${blocked ? "BLOCKED" : "FAILED"}: ${message}`);
+    // The engineer job may have created the project after claim, so re-read the job's projectId.
+    const projectId = job.projectId ?? ((await col.jobs().findOne({ _id: job._id }, { projection: { projectId: 1 } }))?.projectId as string | undefined);
+    if (projectId) {
+      // Only a project this job left "running" (ended before the verification stage) is closed out here.
+      await col.projects().updateOne({ _id: projectId as never, status: "running" }, { $set: { status: blocked ? "blocked" : "failed", error: message } }).catch(() => {});
+      await event(projectId, jobId, null, "error", `${blocked ? "BLOCKED" : "FAILED"}: ${message}`);
+    }
     log(`${blocked ? "blocked" : "failed"} ${job.type} ${jobId}: ${message}`);
   } finally {
     clearInterval(beat);
     await telemetry.flush().catch(() => {});
+    void awsAfterJob(job._id); // S3 artifacts + CloudWatch metrics; never throws
   }
+}
+
+/** Explicit run limits written on the job by scripts/evolve.ts (--limit / --max-repairs / --evidence-since). */
+function jobLimits(job: JobDoc): RunLimits {
+  const j = job as unknown as { caseLimit?: unknown; maxRepairs?: unknown; evidenceSince?: unknown };
+  const int = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined);
+  const since = j.evidenceSince instanceof Date ? j.evidenceSince : typeof j.evidenceSince === "string" ? new Date(j.evidenceSince) : undefined;
+  return { caseLimit: int(j.caseLimit) || undefined, maxRepairs: int(j.maxRepairs), evidenceSince: since && !Number.isNaN(since.getTime()) ? since : undefined };
 }
 
 async function dispatch(type: JobType, job: JobDoc, jobId: string) {
@@ -118,8 +139,10 @@ async function dispatch(type: JobType, job: JobDoc, jobId: string) {
         await col.jobs().updateOne({ _id: job._id }, { $set: { projectId } });
         await col.projects().insertOne({ _id: projectId as never, specText: job.specText, sceneId: scene.id, status: "running", harnessVersion: config.version, origin: job.origin, createdAt: new Date() });
       }
-      telemetry.beginRun(projectId, { event: "engineering_job", input: job.specText ?? "", properties: { harness_version: config.version, scene: scene.id, origin: job.origin } });
-      const r = await runEngineering({ projectId, jobId, specText: job.specText ?? "", scene, config }, { ...rig, rigId });
+      // A resumed job (crash / stale reclaim) continues the Raindrop interaction its first attempt began.
+      const rdEventId = telemetry.beginRun(projectId, { event: "engineering_job", input: job.specText ?? "", properties: { harness_version: config.version, scene: scene.id, origin: job.origin }, featureFlags: harnessFlags(config), resumeEventId: (job as { raindropEventId?: string }).raindropEventId });
+      if (rdEventId) await col.jobs().updateOne({ _id: job._id }, { $set: { raindropEventId: rdEventId } });
+      const r = await telemetry.span(projectId, "engineering", () => runEngineering({ projectId, jobId, specText: job.specText ?? "", scene, config }, { ...rig, rigId }));
       await telemetry.finishRun(projectId, `${r.status} after ${r.attempts} attempt(s)`, { status: r.status, attempts: r.attempts });
       return { projectId, ...r, lastSimRun: r.lastSimRun && { simRunId: r.lastSimRun.simRunId, passed: r.lastSimRun.passed, failed: r.lastSimRun.failed, blocked: r.lastSimRun.blocked } };
     }
@@ -127,7 +150,7 @@ async function dispatch(type: JobType, job: JobDoc, jobId: string) {
       if (!job.projectId) throw new BlockedError("no project selected: run an engineering job first");
       const project = await col.projects().findOne({ _id: job.projectId as never });
       const scene = await loadScene(project?.sceneId as string);
-      return runFaultAndImprove({ jobId, projectId: job.projectId, faultId: job.faultId, scene, config }, { ...rig, rigId });
+      return runFaultAndImprove({ jobId, projectId: job.projectId, faultId: job.faultId, scene, config, limits: jobLimits(job) }, { ...rig, rigId });
     }
     case "spec_change": {
       if (!job.projectId) throw new BlockedError("spec change needs a project");
@@ -137,7 +160,7 @@ async function dispatch(type: JobType, job: JobDoc, jobId: string) {
       const revision = ((project.revision as number | undefined) ?? 0) + 1;
       const baseline = project.finalPlcVersionId ? await col.plcVersions().findOne({ _id: new (await import("mongodb")).ObjectId(String(project.finalPlcVersionId)) }) : null;
       await col.projects().updateOne({ _id: job.projectId as never }, { $set: { specText: job.specText, revision, status: "running" }, $push: { specHistory: { revision, specText: job.specText, at: new Date() } } as never });
-      telemetry.beginRun(job.projectId, { event: "spec_change", input: job.specText ?? "", properties: { revision } });
+      telemetry.beginRun(job.projectId, { event: "spec_change", input: job.specText ?? "", properties: { revision }, featureFlags: harnessFlags(config) });
       const r = await runEngineering(
         { projectId: job.projectId, jobId, specText: job.specText ?? "", scene, config, revision, baselineSource: (baseline?.source as string | undefined) ?? undefined },
         { ...rig, rigId },
@@ -146,11 +169,11 @@ async function dispatch(type: JobType, job: JobDoc, jobId: string) {
       return { projectId: job.projectId, revision, status: r.status, attempts: r.attempts };
     }
     case "evolve":
-      return runEvolveRound({ jobId, config, trigger: "manual evolve job" });
+      return runEvolveRound({ jobId, config, trigger: "manual evolve job", limits: jobLimits(job) });
     case "benchmark":
-      return runBenchmarkJob({ jobId, candidateVersion: (job as unknown as { candidateVersion?: number }).candidateVersion }, { ...rig, rigId, loadScene });
+      return runBenchmarkJob({ jobId, candidateVersion: (job as unknown as { candidateVersion?: number }).candidateVersion, limits: jobLimits(job) }, { ...rig, rigId, loadScene });
     case "ablation":
-      return runAblationJob({ jobId }, { ...rig, rigId, loadScene });
+      return runAblationJob({ jobId, limits: jobLimits(job) }, { ...rig, rigId, loadScene });
     default:
       throw new Error(`job type ${type} not handled by this worker`);
   }

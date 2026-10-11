@@ -73,7 +73,34 @@ export async function runPlan(args: {
       steps: test.steps,
       stepLogs: exec.logs,
       startedAt: new Date(base),
+      attempt: exec.attempts,
     });
+    // A first attempt BLOCKED for insufficient measurements was re-run once (never a FAILED one). Keep it on
+    // record, marked superseded; its samples go under a distinct testId so the final attempt's timeline is clean.
+    if (exec.superseded) {
+      const prev = exec.superseded;
+      const prevBase = Date.parse(prev.startedAt);
+      const prevKey = `${test.id}~attempt1`;
+      if (prev.samples.length)
+        await col.measurements().insertMany(
+          prev.samples.map((s) => ({ ts: new Date(prevBase + s.t), meta: { simRunId: String(simRunId), testId: prevKey }, t: s.t, values: s.values })),
+        );
+      await col.testResults().insertOne({
+        simRunId: String(simRunId),
+        projectId: args.projectId,
+        plcVersionId: args.plcVersionId,
+        harnessVersion: args.harnessVersion,
+        split: args.split ?? "train",
+        ...prev.result,
+        steps: test.steps,
+        stepLogs: prev.logs,
+        startedAt: new Date(prevBase),
+        attempt: 1,
+        superseded: true,
+        supersededBy: String(tr.insertedId),
+        measurementsKey: prevKey,
+      });
+    }
     const traceId = telemetry.tool(
       { name: "simulator_test", runId: args.projectId, input: { testId: test.id, visibility: test.visibility } },
       { ok: exec.result.verdict === "passed", summary: `${test.id}: ${exec.result.verdict}`, durationMs: Math.round(performance.now() - t0), evidenceIds: [String(tr.insertedId)] },

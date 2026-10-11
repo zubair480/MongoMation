@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import type { HarnessConfig, HarnessScores } from "@mongomation/types";
 import { decide } from "../src/rsi/gate.ts";
 import { configDiff, guardrailViolations, stripMeta } from "../src/rsi/guardrails.ts";
+import { caseRow, score } from "../src/rsi/evolve.ts";
 
 const v0 = { ...JSON.parse(readFileSync(new URL("../../../harness/v0.json", import.meta.url), "utf8")), createdAt: "2026-10-11T00:00:00Z" } as HarnessConfig;
 const ok = { citedRunIdsExist: true };
@@ -52,5 +53,45 @@ describe("gate", () => {
   });
   it("refuses to compare different case sets", () => {
     assert.equal(decide({ ...base, cases: 3 }, base).verdict, "rolled_back");
+  });
+  it("never keeps a change while either side has blocked tests (inconclusive)", () => {
+    const d = decide({ ...base, requirement_satisfaction: 0.9, tests_blocked: 0 }, { ...base, tests_blocked: 2 });
+    assert.equal(d.verdict, "rolled_back");
+    assert.match(d.reasons[0], /^inconclusive: 2 blocked/);
+    assert.equal(decide({ ...base, requirement_satisfaction: 0.9, tests_blocked: 1 }, base).verdict, "rolled_back");
+    assert.equal(decide({ ...base, requirement_satisfaction: 0.9, tests_blocked: 0 }, { ...base, tests_blocked: 0 }).verdict, "kept");
+  });
+});
+
+describe("evaluation scoring with blocked tests", () => {
+  const reqs = [
+    { id: "R1", kind: "start_stop", support: "supported" },
+    { id: "R2", kind: "interlock", support: "supported" },
+  ] as never;
+  // Shape of the real ablation run 6acbe94b (h1-interlock, bare): 4 passed + 2 blocked, R1 verified, R2 blocked.
+  const lastSimRun = {
+    results: [
+      { verdict: "passed", category: "functional" }, { verdict: "passed", category: "functional" },
+      { verdict: "passed", category: "safety" }, { verdict: "passed", category: "functional" },
+      { verdict: "blocked", category: "safety" }, { verdict: "blocked", category: "functional" },
+    ],
+    verdicts: [{ requirementId: "R1", status: "verified" }, { requirementId: "R2", status: "blocked" }],
+  } as never;
+  const r = { attempts: 1, firstCompileOk: true, costUsd: 0.05, seconds: 120, lastSimRun };
+
+  it("an ablation row keeps its results and counts blocked tests as not passed", () => {
+    const row = caseRow(r, reqs);
+    assert.deepEqual(row.tests, [4, 6, 2]);
+    assert.deepEqual(row.safety, [1, 2]);
+    assert.equal(row.satisfaction, 0.5);
+    const s = score([row]);
+    assert.equal(s.cases, 1);
+    assert.equal(s.tests_blocked, 2);
+    assert.ok(Math.abs(s.test_pass_rate - 4 / 6) < 1e-9);
+    assert.equal(s.safety_pass_rate, 0.5);
+  });
+  it("a fully measured row reports zero blocked tests", () => {
+    const clean = { ...r, lastSimRun: { results: [{ verdict: "passed", category: "functional" }], verdicts: [{ requirementId: "R1", status: "verified" }] } as never };
+    assert.equal(score([caseRow(clean, reqs)]).tests_blocked, 0);
   });
 });

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useSearchParams } from 'react-router';
 import { useSession } from 'modelence/client';
-import { receivedAtOf, useDashboard, useProject, useRsi, useScenes } from '@/client/lib/api';
+import { receivedAtOf, useAblation, useDashboard, useProject, useRsi, useScenes } from '@/client/lib/api';
 import { Seo } from '@/client/components/Seo';
 import { HeaderBar } from '@/client/components/mm/HeaderBar';
 import { SpecConsole } from '@/client/components/mm/SpecConsole';
@@ -10,8 +10,14 @@ import { SimulationPanel } from '@/client/components/mm/SimulationPanel';
 import { ExecutionPanel } from '@/client/components/mm/ExecutionPanel';
 import { ResultsCard } from '@/client/components/mm/ResultsCard';
 import { RsiCard } from '@/client/components/mm/RsiCard';
+import { AblationCard } from '@/client/components/mm/AblationCard';
 import { LongHorizonCard } from '@/client/components/mm/LongHorizonCard';
 import { DisconnectedNotice, EmptyState, Loading, ServerUnreachable } from '@/client/components/mm/ui';
+import { InsightsCard } from '@/client/components/mm/InsightsCard';
+import { FailureSearchCard } from '@/client/components/mm/FailureSearchCard';
+import { LiveEventStrip, NotesCard, OpsCard } from '@/client/components/mm/OpsNotes';
+import { ArtifactsCard, RigAwsHealth } from '@/client/components/mm/AwsPanels';
+import { useAnalytics, useNotes, useOps } from '@/client/lib/insights';
 import type { Envelope } from '@/shared/mongomation';
 
 /** Placeholder while a query has no usable data (loading / server unreachable / Atlas disconnected); null once it has. */
@@ -30,6 +36,7 @@ export default function DashboardPage() {
   const dashboardQ = useDashboard();
   const scenesQ = useScenes();
   const rsiQ = useRsi();
+  const ablationQ = useAblation();
 
   const dash = dashboardQ.data?.connected ? dashboardQ.data : null;
   const dashReceivedAt = receivedAtOf(dashboardQ);
@@ -42,6 +49,9 @@ export default function DashboardPage() {
   const projectQ = useProject(selectedProjectId);
   const projectData = projectQ.data?.connected ? projectQ.data : null;
   const project = projectData?.project ?? null;
+  const analyticsQ = useAnalytics(selectedProjectId);
+  const notesQ = useNotes(selectedProjectId);
+  const opsQ = useOps();
   const projectScene = project?.sceneId ? scenes.find((s) => s.id === project.sceneId) : undefined;
 
   const selectProject = React.useCallback(
@@ -73,6 +83,8 @@ export default function DashboardPage() {
   const dashPlaceholder = placeholderFor(dashboardQ, 'dashboard');
   const projectPlaceholder = selectedProjectId ? placeholderFor(projectQ, 'project') : dashPlaceholder;
   const rsiPlaceholder = placeholderFor(rsiQ, 'harness versions');
+  const ablationPlaceholder = placeholderFor(ablationQ, 'ablation results');
+  const analyticsPlaceholder = selectedProjectId ? placeholderFor(analyticsQ, 'signal analytics') : dashPlaceholder;
 
   return (
     <div className="min-h-screen bg-blueprint text-plant-100">
@@ -114,6 +126,8 @@ export default function DashboardPage() {
           />
         ) : null}
 
+        <LiveEventStrip projectId={selectedProjectId} />
+
         <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.1fr)_minmax(0,1.25fr)]">
           <SimulationPanel
             disconnected={dashDisconnected}
@@ -122,6 +136,7 @@ export default function DashboardPage() {
             scenes={scenes}
             selectedProjectSceneId={project?.sceneId}
             faults={projectData?.faults ?? []}
+            awsSlot={<RigAwsHealth />}
           />
 
           <ExecutionPanel
@@ -139,11 +154,35 @@ export default function DashboardPage() {
               {projectPlaceholder ??
                 (selectedProjectId ? undefined : <EmptyState>No runs yet · results appear after the first engineering run</EmptyState>)}
             </ResultsCard>
+            <ArtifactsCard
+              projectId={selectedProjectId}
+              revision={`${projectData?.plcVersions[0]?.id ?? ''}:${projectData?.simRun?.id ?? ''}:${projectData?.simRun?.status ?? ''}`}
+            />
+            <InsightsCard data={analyticsQ.data?.connected ? analyticsQ.data : null}>{analyticsPlaceholder ?? undefined}</InsightsCard>
+            <NotesCard projectId={selectedProjectId} data={notesQ.data ?? null}>
+              {selectedProjectId ? (
+                notesQ.data ? undefined : notesQ.isError ? (
+                  <ServerUnreachable error={notesQ.error} what="notes" />
+                ) : (
+                  <Loading label="Loading notes" />
+                )
+              ) : (
+                <EmptyState>Pick a project to see its notes</EmptyState>
+              )}
+            </NotesCard>
             <RsiCard data={rsiQ.data?.connected ? rsiQ.data : null}>{rsiPlaceholder ?? undefined}</RsiCard>
+            <AblationCard data={ablationQ.data?.connected ? ablationQ.data : null}>{ablationPlaceholder ?? undefined}</AblationCard>
             <LongHorizonCard dash={dash} receivedAt={dashReceivedAt} signedIn={!!user}>
               {dashPlaceholder ?? undefined}
             </LongHorizonCard>
           </div>
+        </div>
+
+        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+          <FailureSearchCard onOpenProject={selectProject} />
+          <OpsCard data={opsQ.data ?? null}>
+            {opsQ.data ? undefined : opsQ.isError ? <ServerUnreachable error={opsQ.error} what="ops" /> : <Loading label="Loading ops" />}
+          </OpsCard>
         </div>
 
         <footer className="pt-2 text-center font-mono text-[10.5px] text-plant-500">

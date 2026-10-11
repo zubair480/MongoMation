@@ -4,6 +4,7 @@
 // PROGRAM / CONFIGURATION boilerplate.
 import { createHash } from "node:crypto";
 import type { BoundRequirement, IoPoint, SceneDefinition } from "@mongomation/types";
+import { HEARTBEAT_MARK } from "../tools/linkprobe.ts";
 
 export const PROGRAM_NAME = "mongomation_main";
 
@@ -45,13 +46,41 @@ export interface GeneratedLogic {
   body: string;
 }
 
+/**
+ * Harness-owned Modbus link heartbeat (see tools/linkprobe.ts). Only when the scene exposes an INT output at %QW0
+ * and the generated logic does not use it (absent, or only `X := 0;`), so a spec that really uses the counter keeps it.
+ */
+export function heartbeatFor(io: IoPoint[], logic: GeneratedLogic): { counter: IoPoint; nc?: IoPoint } | null {
+  const counter = io.find((p) => p.role === "actuator" && p.address === "%QW0" && p.dataType === "INT");
+  if (!counter || logic.variables.some((v) => v.name.toLowerCase() === "mm_hb")) return null;
+  const re = new RegExp(`\\b${counter.variable}\\b`);
+  const zero = new RegExp(`^\\s*${counter.variable}\\s*:=\\s*0\\s*;\\s*(\\(\\*.*\\*\\))?\\s*$`);
+  if (logic.body.split("\n").some((l) => re.test(l) && !zero.test(l))) return null;
+  const nc = io.find((p) => p.role === "sensor" && p.activeLow && p.dataType === "BOOL");
+  return { counter, ...(nc ? { nc } : {}) };
+}
+
 export function assembleProgram(io: IoPoint[], logic: GeneratedLogic, header: string) {
   const located = io.map((p) => `    ${p.variable} AT ${p.address} : ${p.dataType}; (* ${p.comment} *)`).join("\n");
-  const internal = logic.variables
-    .map((v) => `    ${v.name} : ${v.type}${v.initial ? ` := ${v.initial}` : ""};${v.comment ? ` (* ${v.comment.replace(/\*\)/g, "")} *)` : ""}`)
-    .join("\n");
-  const body = logic.body
-    .split("\n")
+  const hb = heartbeatFor(io, logic);
+  const internal = [
+    ...logic.variables.map((v) => `    ${v.name} : ${v.type}${v.initial ? ` := ${v.initial}` : ""};${v.comment ? ` (* ${v.comment.replace(/\*\)/g, "")} *)` : ""}`),
+    ...(hb ? ["    mm_hb : INT := 0; (* harness: Modbus link heartbeat *)"] : []),
+  ].join("\n");
+  const heartbeat = hb
+    ? [
+        `(* ${HEARTBEAT_MARK} counter="${hb.counter.tag}"${hb.nc ? ` nc="${hb.nc.tag}"` : ""} *)`,
+        `(* Harness-owned link probe, not control logic: ${hb.counter.tag} = scan counter * 2 + ${hb.nc ? `${hb.nc.tag} input` : "0"} *)`,
+        "mm_hb := mm_hb + 1;",
+        "IF mm_hb >= 500 THEN",
+        "  mm_hb := 0;",
+        "END_IF;",
+        ...(hb.nc
+          ? [`IF ${hb.nc.variable} THEN`, `  ${hb.counter.variable} := mm_hb * 2 + 1;`, "ELSE", `  ${hb.counter.variable} := mm_hb * 2;`, "END_IF;"]
+          : [`${hb.counter.variable} := mm_hb * 2;`]),
+      ]
+    : [];
+  const body = [...logic.body.split("\n"), ...heartbeat]
     .map((l) => `  ${l}`)
     .join("\n");
   const source = `(* ${header.replace(/\*\)/g, "")} *)

@@ -1,0 +1,7 @@
+{
+  "name": "requeue-stale-jobs",
+  "type": "SCHEDULED",
+  "disabled": false,
+  "config": { "schedule": "*/1 * * * *", "skip_catchup_events": true },
+  "function_name": "requeueStaleJobs"
+}

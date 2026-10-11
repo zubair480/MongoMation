@@ -39,7 +39,7 @@ const Logic = z.object({
   explanation: z.string(),
 });
 
-const ST_DIALECT = `Target: OpenPLC (IEC 61131-3 Structured Text compiled by MatIEC). Write ONLY:
+const ST_DIALECT = `Target: OpenPLC (IEC 61131-3 Structured Text compiled by STruC++ for OpenPLC Runtime v4). Write ONLY:
 1) "variables": internal variables (types: ${ALLOWED_TYPES.join(", ")}). Do NOT redeclare I/O variables; they exist already.
 2) "body": the statements inside PROGRAM ... END_PROGRAM. No PROGRAM/VAR/CONFIGURATION keywords in the body.
 Conventions:

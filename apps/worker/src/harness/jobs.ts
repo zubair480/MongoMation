@@ -6,7 +6,7 @@
 //   3. claims carry worker id + heartbeat, so recovery never steals a live job.
 import { hostname } from "node:os";
 import type { JobRequest, JobStatus } from "@mongomation/types";
-import { ObjectId, type WithId, type Document } from "mongodb";
+import { ObjectId, type ClientSession, type WithId, type Document } from "mongodb";
 import { col } from "../db/index.ts";
 
 export const HEARTBEAT_MS = 3_000;
@@ -26,9 +26,9 @@ export interface JobDoc extends JobRequest {
   error?: string;
 }
 
-export async function enqueue(req: JobRequest) {
-  const doc = { ...req, status: "queued" as JobStatus, createdAt: new Date(), attempts: 0 };
-  const res = await col.jobs().insertOne(doc);
+export async function enqueue(req: JobRequest, extra: Record<string, unknown> = {}, session?: ClientSession) {
+  const doc = { ...req, ...extra, status: "queued" as JobStatus, createdAt: new Date(), attempts: 0 };
+  const res = await col.jobs().insertOne(doc, { session });
   return res.insertedId;
 }
 
