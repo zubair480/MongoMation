@@ -7,6 +7,7 @@ import type { Envelope } from '@/shared/mongomation';
 import { withAtlas } from './atlas';
 import { cached } from './cache';
 import { measurementAnalytics } from './analytics';
+import { rigAws } from './artifacts';
 import { parseArgs } from './errors';
 import { forProject, inCollections, liveFromAtlas } from './live';
 import { ablation, dashboard, project, rsi, scenes } from './queries';
@@ -50,6 +51,10 @@ export function liveRsi() {
 
 export function liveAblation() {
   return liveFromAtlas(ablation, { match: inCollections('benchmark_runs'), throttleMs: 1500, heartbeatMs: 60_000 });
+}
+
+export function liveRigAws() {
+  return liveFromAtlas(rigAws, { match: inCollections('rig_status'), throttleMs: 1000, heartbeatMs: 30_000 });
 }
 
 /** Window-function analytics over the project's newest sim run; refreshes as test results land. */

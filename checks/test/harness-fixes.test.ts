@@ -223,16 +223,24 @@ describe("coverage threshold relative to the achieved sample rate", () => {
   });
 });
 
-/** Wraps a rig: reads matching `stall(n)` (n = 1-based read count) take 1.2 s, like the gateway stalls seen live. */
+/**
+ * Wraps a rig: a read matching `stall(n)` (n = 1-based read count) stalls the WHOLE rig link for 1.2 s, like the
+ * multi-second gateway outages seen live: every read issued in that window (hedges included) answers only when it
+ * ends, so no client-side trick can fill the hole and the test must end BLOCKED (single per-request delays are
+ * covered by the sampler's hedged reads, see sampler.test.ts).
+ */
 class StallingRig implements SimRig {
   reads = 0;
+  private stalledUntil = 0;
   constructor(
     private readonly inner: SimRig,
     private readonly stall: (n: number) => boolean,
   ) {}
   async read(tags: string[]) {
     this.reads++;
-    if (this.stall(this.reads)) await sleep(1200);
+    if (this.stall(this.reads)) this.stalledUntil = Math.max(this.stalledUntil, performance.now() + 1200);
+    const wait = this.stalledUntil - performance.now();
+    if (wait > 0) await sleep(wait);
     return this.inner.read(tags);
   }
   force(tag: string, value: TagValue) {

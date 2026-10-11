@@ -14,6 +14,8 @@ import type { Envelope, EventLite } from '@/shared/mongomation';
 import {
   EVENTS_CHANNEL,
   type AnalyticsData,
+  type ArtifactLinksData,
+  type RigAwsData,
   type FailureFacetsData,
   type FailureSearchData,
   type FailureSuggestData,
@@ -128,4 +130,20 @@ export function useLiveEvents(projectId: string | null, max = 8): { events: (Eve
     };
   }, [projectId, max]);
   return { events, joined };
+}
+
+// ---- AWS: presigned artifact links (plain read; URLs live 15 min) + rig health (live) ---------------------
+
+export function useArtifactLinks(projectId: string | null, revision: string | undefined) {
+  return useQuery({
+    queryKey: ["mongomation.artifactLinks", projectId, revision],
+    queryFn: () => callMethod<Envelope<ArtifactLinksData>>("mongomation.artifactLinks", { projectId }, silent),
+    enabled: !!projectId,
+    staleTime: 5 * 60_000,
+    refetchInterval: 10 * 60_000,
+  });
+}
+
+export function useRigAws() {
+  return useQuery(modelenceLiveQuery<Envelope<RigAwsData>>("mongomation.liveRigAws"));
 }

@@ -88,6 +88,7 @@ export function SimulationPanel({
   scenes,
   selectedProjectSceneId,
   faults,
+  awsSlot,
 }: {
   disconnected: Disconnected | null;
   rig: RigLite | null;
@@ -95,6 +96,8 @@ export function SimulationPanel({
   scenes: SceneLite[];
   selectedProjectSceneId?: string;
   faults: FaultInjectionLite[];
+  /** Rig host health from the AWS SSM probe (rig_status.aws), rendered at the bottom of the panel. */
+  awsSlot?: React.ReactNode;
 }) {
   const age = useLiveAge(rig?.ageMs, receivedAt);
   const rigScene = rig?.sceneId ? scenes.find((s) => s.id === rig.sceneId) : undefined;
@@ -259,6 +262,7 @@ export function SimulationPanel({
           )}
         </div>
       )}
+      {awsSlot}
     </Panel>
   );
 }

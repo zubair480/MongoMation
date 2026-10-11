@@ -37,6 +37,13 @@ export interface EngineerInput {
   baselineSource?: string;
   /** Benchmark cases grade against ground-truth requirements (same plan for every condition). */
   evaluationRequirements?: BoundRequirement[];
+  /**
+   * Set ONLY by benchmark/ablation runCase (rsi/evolve.ts). A run whose tests are blocked (no evidence) but none
+   * failed ends the case with that run kept as its result (blocked tests count as NOT passed) instead of throwing
+   * BlockedError, so one condition's missing evidence does not discard its other results or abort the benchmark.
+   * User jobs never set it and keep throwing BlockedError (never repair a program on missing evidence).
+   */
+  evaluation?: boolean;
 }
 
 export interface EngineerResult {
@@ -214,6 +221,10 @@ export async function runEngineering(input: EngineerInput, deps: EngineerDeps): 
       else {
         lastRun = outcome.run;
         await runStage(ctx, "tests", attempt, { simRunId: outcome.run.simRunId }, async () => ({ passed: outcome.run.passed, failed: outcome.run.failed, blocked: outcome.run.blocked }));
+        if (outcome.run.blocked && !outcome.run.failed && input.evaluation) {
+          await event(projectId, jobId, "tests", "warn", `${outcome.run.blocked} test(s) blocked (no evidence); evaluation run: recorded as not passed, no repair on missing evidence`);
+          break;
+        }
         if (outcome.run.blocked && !outcome.run.failed) throw new BlockedError(`${outcome.run.blocked} test(s) could not produce evidence (rig / measurement problem); not retrying the program`);
         if (!outcome.run.failed) {
           if (attempt > 0) await verifyLessons(projectId);

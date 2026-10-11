@@ -164,7 +164,16 @@ export async function loadFrozenBenchmark(): Promise<{ cases: BenchmarkCase[]; h
   return { cases: JSON.parse(raw).cases as BenchmarkCase[], hash };
 }
 
-function score(results: { r: EngineerResult; safety: [number, number]; tests: [number, number]; satisfaction: number }[]): HarnessScores {
+export type CaseRow = {
+  r: Pick<EngineerResult, "attempts" | "firstCompileOk" | "costUsd" | "seconds">;
+  safety: [number, number];
+  /** [passed, total, blocked]: blocked tests are in total and never in passed. */
+  tests: [number, number, number];
+  satisfaction: number;
+};
+
+/** Per-condition scores. Blocked (no-evidence) tests count as not passed and are reported in tests_blocked. */
+export function score(results: CaseRow[]): HarnessScores {
   const n = results.length;
   const mean = (f: (x: (typeof results)[number]) => number) => (n ? results.reduce((a, x) => a + f(x), 0) / n : 0);
   const safetyTotal = results.reduce((a, x) => a + x.safety[1], 0);
@@ -178,6 +187,21 @@ function score(results: { r: EngineerResult; safety: [number, number]; tests: [n
     repairs_per_case: mean((x) => x.r.attempts - 1),
     cost_usd_per_case: mean((x) => x.r.costUsd),
     seconds_per_case: mean((x) => x.r.seconds),
+    tests_blocked: results.reduce((a, x) => a + x.tests[2], 0),
+  };
+}
+
+/** Grades one finished case from its last simulator run (pure; used by runCase and unit tests). */
+export function caseRow(r: CaseRow["r"] & { lastSimRun: EngineerResult["lastSimRun"] }, requirements: BoundRequirement[]): CaseRow {
+  const results = r.lastSimRun?.results ?? [];
+  const safety = results.filter((t) => t.category === "safety");
+  const supported = requirements.filter((x) => x.support === "supported").length;
+  const verified = (r.lastSimRun?.verdicts ?? []).filter((v) => v.status === "verified").length;
+  return {
+    r,
+    safety: [safety.filter((t) => t.verdict === "passed").length, safety.length],
+    tests: [results.filter((t) => t.verdict === "passed").length, results.length, results.filter((t) => t.verdict === "blocked").length],
+    satisfaction: supported ? verified / supported : 0,
   };
 }
 
@@ -193,21 +217,12 @@ async function runCase(
   const config = capRepairs(harness, run.maxRepairs);
   const projectId = newProjectId();
   await col.projects().insertOne({ _id: projectId as never, specText: c.specText, sceneId: scene.id, status: "running", harnessVersion: config.version, origin: "benchmark", benchmarkId, caseId: c.id, condition, createdAt: new Date() });
-  const r = await runEngineering({ projectId, jobId: benchmarkId, specText: c.specText, scene, config, heldOut: c.split === "heldout", evaluationRequirements: c.requirements }, deps);
-  const results = r.lastSimRun?.results ?? [];
-  const safety = results.filter((t) => t.category === "safety");
-  const supported = c.requirements.filter((x) => x.support === "supported").length;
-  const verified = (r.lastSimRun?.verdicts ?? []).filter((v) => v.status === "verified").length;
-  const row = {
-    r,
-    safety: [safety.filter((t) => t.verdict === "passed").length, safety.length] as [number, number],
-    tests: [results.filter((t) => t.verdict === "passed").length, results.length] as [number, number],
-    satisfaction: supported ? verified / supported : 0,
-  };
+  const r = await runEngineering({ projectId, jobId: benchmarkId, specText: c.specText, scene, config, heldOut: c.split === "heldout", evaluationRequirements: c.requirements, evaluation: true }, deps);
+  const row = caseRow(r, c.requirements);
   await col.benchmarks().insertOne({
     benchmarkId, harnessVersion: config.version, condition, caseId: c.id, split: c.split, projectId,
     limit: run.limit, caseIds: run.caseIds, maxRepairs: run.maxRepairs ?? null, repairBudgetUsed: config.workflow.repair_budget, repairBudgetConfigured: harness.workflow.repair_budget,
-    metrics: { satisfaction: row.satisfaction, safety: row.safety, tests: row.tests, attempts: r.attempts, firstCompileOk: r.firstCompileOk, costUsd: r.costUsd, seconds: r.seconds, status: r.status }, createdAt: new Date() });
+    metrics: { satisfaction: row.satisfaction, safety: row.safety, tests: row.tests, blocked: row.tests[2], attempts: r.attempts, firstCompileOk: r.firstCompileOk, costUsd: r.costUsd, seconds: r.seconds, status: r.status }, createdAt: new Date() });
   return row;
 }
 

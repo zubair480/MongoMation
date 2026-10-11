@@ -1,9 +1,10 @@
 // Live Raindrop round trip: emit one clearly-labelled smoke interaction through the worker's real telemetry path
 // (feature flags, sub-agent model call, job-level + per-test tool spans, signals, attachments, resume), then read
 // it back through the Raindrop Query API to prove ingest. No model is called; the AI payloads are labelled smoke.
-//   npm run raindrop:smoke
+//   npm run raindrop:smoke                     (RAINDROP_WORKSHOP=1 also checks the local Workshop mirror)
 import { harnessFlags, initTelemetry, telemetry } from "../apps/worker/src/telemetry/index.ts";
 import { RaindropQuery, raindropEvidence } from "../apps/worker/src/telemetry/raindrop-query.ts";
+import { workshopUrl } from "../apps/worker/src/telemetry/raindrop.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 if (!process.env.RAINDROP_WRITE_KEY || !process.env.RAINDROP_QUERY_API_KEY) {
@@ -48,4 +49,15 @@ for (const id of want) {
 }
 const ev = await raindropEvidence({ windowDays: 1, log: console.error });
 console.log("evidence summary:", JSON.stringify(ev && { totalEvents: ev.totalEvents, signals: ev.signals.map((s) => `${s.name}=${s.events}`), errorSpans: ev.errorSpans }));
-process.exit(found.size === want.length ? 0 : 1);
+
+// Workshop mirror (RAINDROP_WORKSHOP=1): the same job trace must also be in the local Workshop daemon.
+let workshopOk = true;
+const ws = workshopUrl();
+if (ws && jobEvent) {
+  const base = new URL(ws).origin;
+  const res = await fetch(`${base}/api/traces/query`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sql: `SELECT id, event_name, span_count, finished FROM runs_with_hints WHERE event_id = '${jobEvent}'` }) }).catch(() => null);
+  const rows = res?.ok ? ((await res.json()) as { rows: unknown[] }).rows : [];
+  workshopOk = rows.length > 0;
+  console.log(`workshop ${base}:`, workshopOk ? JSON.stringify(rows) : "NOT FOUND");
+}
+process.exit(found.size === want.length && workshopOk ? 0 : 1);

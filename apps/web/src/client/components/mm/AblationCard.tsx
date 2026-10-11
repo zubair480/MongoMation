@@ -16,6 +16,7 @@ const ROWS: Row[] = [
   { key: 'repairs_per_case', label: 'Repairs / case', fmt: (v) => v.toFixed(2), better: 'down' },
   { key: 'cost_usd_per_case', label: 'Cost / case', fmt: (v) => usd(v), better: 'down' },
   { key: 'seconds_per_case', label: 'Seconds / case', fmt: (v) => `${v.toFixed(0)} s`, better: 'down' },
+  { key: 'tests_blocked', label: 'Blocked tests (no evidence)', fmt: (v) => String(v), better: 'down' },
   { key: 'cases', label: 'Cases', fmt: (v) => String(v), better: null },
 ];
 

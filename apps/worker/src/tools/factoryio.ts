@@ -86,12 +86,12 @@ export class FactoryIoWebApi implements Simulator {
    * Every Factory I/O call we make is idempotent (GET, or a PUT that sets/forces/releases absolute values).
    * 4xx and per-item errors are not retried.
    */
-  private async call<T>(method: "GET" | "PUT", path: string, body?: unknown, retries = 2): Promise<T> {
+  private async call<T>(method: "GET" | "PUT", path: string, body?: unknown, retries = 2, timeoutMs = this.timeoutMs): Promise<T> {
     let res: { status: number; text: string };
     for (let attempt = 0; ; attempt++) {
       try {
         // Never send a body with GET; GET /api/tag/values without a body returns every tag.
-        res = await fioRequest(this.base, method, path, { body, timeoutMs: this.timeoutMs, hostHeader: this.hostHeader, ...this.gateway });
+        res = await fioRequest(this.base, method, path, { body, timeoutMs, hostHeader: this.hostHeader, ...this.gateway });
         if (res.status >= 500 && attempt < retries) throw new Error(`HTTP ${res.status}`);
         break;
       } catch (err) {
@@ -152,10 +152,14 @@ export class FactoryIoWebApi implements Simulator {
     return tags.map((t) => ({ name: t.name, id: t.id, kind: t.kind, type: t.type, forced: t.isForced, forcedValue: t.forcedValue, value: t.value }));
   }
 
-  /** One request per sample: all values, filtered client-side. */
-  async read(names: string[]): Promise<Record<string, TagValue>> {
+  /**
+   * One request per sample: all values, filtered client-side. The test sampler passes {timeoutMs, retries: 0}: a
+   * slow read must fail fast instead of retrying with backoff inside one sample (that turned single gateway hiccups
+   * into multi-second sampling holes); the sampler's hedge / next tick is the retry.
+   */
+  async read(names: string[], opts: { timeoutMs?: number; retries?: number } = {}): Promise<Record<string, TagValue>> {
     const wanted = await Promise.all(names.map(async (n) => [n, (await this.resolve(n)).id] as const));
-    const values = await this.call<{ id: string; value: TagValue }[]>("GET", "/api/tag/values");
+    const values = await this.call<{ id: string; value: TagValue }[]>("GET", "/api/tag/values", undefined, opts.retries ?? 2, opts.timeoutMs ?? this.timeoutMs);
     const byId = new Map(values.map((v) => [v.id, v.value]));
     const out: Record<string, TagValue> = {};
     for (const [n, id] of wanted) if (byId.has(id)) out[n] = byId.get(id)!;

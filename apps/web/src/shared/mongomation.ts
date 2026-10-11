@@ -373,6 +373,8 @@ export interface HarnessScoresLite {
   repairs_per_case?: number;
   cost_usd_per_case?: number;
   seconds_per_case?: number;
+  /** Tests that produced no evidence (counted as not passed). */
+  tests_blocked?: number;
 }
 
 export interface HarnessVersionLite {

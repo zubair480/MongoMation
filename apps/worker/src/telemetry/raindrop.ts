@@ -36,6 +36,17 @@ interface Run {
   flags: Record<string, FlagValue>;
 }
 
+/** Raindrop Workshop (local debugger, `raindrop workshop`, :5899) mirror target. The SDK sends to cloud Raindrop AND
+ *  mirrors every event/span here. Opt-in only: RAINDROP_WORKSHOP=1|<url> or RAINDROP_LOCAL_DEBUGGER=<url>; otherwise
+ *  `false`, so the SDK's NODE_ENV=development auto-detect never adds a local POST to production runs. */
+export function workshopUrl(env: NodeJS.ProcessEnv = process.env): string | false {
+  const explicit = env.RAINDROP_LOCAL_DEBUGGER?.trim();
+  if (explicit) return explicit;
+  const w = env.RAINDROP_WORKSHOP?.trim() ?? "";
+  if (/^https?:\/\//i.test(w)) return w;
+  return /^(1|true|yes|on)$/i.test(w) ? "http://localhost:5899/v1/" : false;
+}
+
 /** Never let observability break engineering. */
 function guard<T>(fn: () => T, fallback: T): T {
   try {
@@ -52,7 +63,7 @@ export class RaindropTelemetry implements Telemetry {
   private runs = new Map<string, Run>();
 
   constructor(writeKey: string, client?: RaindropClient) {
-    this.rd = client ?? new Raindrop({ writeKey, projectId: process.env.RAINDROP_PROJECT_ID || undefined, debugLogs: process.env.RAINDROP_DEBUG === "true" });
+    this.rd = client ?? new Raindrop({ writeKey, projectId: process.env.RAINDROP_PROJECT_ID || undefined, debugLogs: process.env.RAINDROP_DEBUG === "true", localWorkshopUrl: workshopUrl() });
     // Identify the worker so Raindrop's Users view shows which rig / model routing produced the events.
     guard(
       () =>

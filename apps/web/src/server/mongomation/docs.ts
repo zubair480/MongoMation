@@ -434,6 +434,7 @@ const SCORE_KEYS: (keyof HarnessScoresLite)[] = [
   'repairs_per_case',
   'cost_usd_per_case',
   'seconds_per_case',
+  'tests_blocked',
 ];
 
 export function toScores(v: unknown): HarnessScoresLite | undefined {

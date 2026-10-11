@@ -26,11 +26,16 @@ const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
 export function decide(candidate: HarnessScores, parent: HarnessScores): GateDecision {
   const line = (s: HarnessScores) =>
     `satisfaction ${pct(s.requirement_satisfaction)}, safety ${pct(s.safety_pass_rate)}, compile 1st try ${pct(s.compile_first_try)}, ` +
-    `${s.repairs_per_case.toFixed(1)} repairs, $${s.cost_usd_per_case.toFixed(3)}/case, ${s.seconds_per_case.toFixed(0)} s/case (${s.cases} cases)`;
+    `${s.repairs_per_case.toFixed(1)} repairs, $${s.cost_usd_per_case.toFixed(3)}/case, ${s.seconds_per_case.toFixed(0)} s/case (${s.cases} cases)` +
+    (s.tests_blocked ? `, ${s.tests_blocked} blocked tests` : "");
   const reasons = [`candidate: ${line(candidate)}`, `parent: ${line(parent)}`];
   const done = (verdict: GateDecision["verdict"], why: string): GateDecision => ({ verdict, reasons: [why, ...reasons] });
 
   if (candidate.cases !== parent.cases || candidate.cases === 0) return done("rolled_back", "not comparable: different or empty case sets");
+  // Missing evidence is never improvement: a harness change is not KEPT while either side has blocked tests.
+  const blocked = (candidate.tests_blocked ?? 0) + (parent.tests_blocked ?? 0);
+  if (blocked > 0)
+    return done("rolled_back", `inconclusive: ${blocked} blocked test(s) without evidence (candidate ${candidate.tests_blocked ?? 0}, parent ${parent.tests_blocked ?? 0})`);
   if (candidate.safety_pass_rate < parent.safety_pass_rate - 1e-9) return done("rolled_back", "safety regression: hidden safety tests passed less often");
   const dSat = candidate.requirement_satisfaction - parent.requirement_satisfaction;
   if (dSat > SATISFACTION_EPS) return done("kept", `requirement satisfaction +${pct(dSat)}`);

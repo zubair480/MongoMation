@@ -30,7 +30,9 @@
     "ledger": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.rig scripts/evidence-ledger.ts",
     "export": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.rig scripts/export-project.ts",
     "probe": "tsx scripts/gen-probe.ts",
-    "raindrop:smoke": "tsx --env-file-if-exists=.env scripts/raindrop-smoke.ts"
+    "raindrop:smoke": "tsx --env-file-if-exists=.env scripts/raindrop-smoke.ts",
+    "raindrop:eval": "node --env-file-if-exists=.env --env-file-if-exists=.env.rig --import tsx node_modules/raindrop-ai/dist/evals/cli.js run scripts/raindrop-ablation.eval.ts --json",
+    "raindrop:eval:compare": "node --env-file-if-exists=.env node_modules/raindrop-ai/dist/evals/cli.js compare"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

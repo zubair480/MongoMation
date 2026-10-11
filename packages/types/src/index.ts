@@ -211,6 +211,7 @@ export const HarnessScores = z
     repairs_per_case: z.number(),
     cost_usd_per_case: z.number(),
     seconds_per_case: z.number(),
+    tests_blocked: z.number().int().optional(), // tests with no evidence (counted as NOT passed in test_pass_rate)
   })
   .strict();
 export type HarnessScores = z.infer<typeof HarnessScores>;

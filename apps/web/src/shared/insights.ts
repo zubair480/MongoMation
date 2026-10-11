@@ -160,6 +160,42 @@ export interface FailureFacetsData {
   bySplit: FacetBucket[];
 }
 
+// ---- AWS: S3 artifact links + rig health (written by the worker's AWS integration) ----------------------
+
+export interface ArtifactLink {
+  label: string;
+  key: string;
+  bytes?: number;
+  sha256?: string;
+  /** Presigned GET url, or null when S3 is not configured on the dashboard server (fail soft). */
+  url: string | null;
+}
+
+export interface ArtifactLinksData {
+  s3Configured: boolean;
+  ttlSeconds: number;
+  plcVersionId?: string;
+  simRunId?: string;
+  links: {
+    st: ArtifactLink | null;
+    compileLog: ArtifactLink | null;
+    testReport: ArtifactLink | null;
+    jobRecord: ArtifactLink | null;
+  };
+}
+
+export interface RigAwsHost {
+  role: string;
+  ok?: boolean;
+  status?: string;
+  detail?: string;
+  checks: { name: string; ok: boolean | null }[];
+}
+
+export interface RigAwsData {
+  aws: { checkedAt?: Date; ageMs?: number; via?: string; healthy?: boolean; hosts: RigAwsHost[] } | null;
+}
+
 /** Pushed on EVENTS_CHANNEL for every event the worker inserts (hidden test ids already scrubbed). */
 export interface LiveEventMessage {
   projectId: string;
