@@ -1,0 +1,1621 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PLC Dashboard · MongoMation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<style>
+/* Light control-room theme (ISA-101: neutral gray plant, color only for state) */
+:root{
+  --bg:#f1f0ec;--surface:#ffffff;--sunk:#f7f6f2;--sunk2:#efede8;--line:#e3e0d9;--line2:#cfcbc2;
+  --ink:#1b2127;--ink2:#3f4952;--ink3:#67717b;--ink4:#9aa1a8;
+  --go:#13804a;--go-bg:#e4f3ea;--go-line:#a9d9bd;
+  --stop:#c0322b;--stop-bg:#fbe8e6;--stop-line:#efb4ae;
+  --ca:#9a5c00;--ca-bg:#fdf0d5;--ca-line:#f0cf87;--ca-fill:#f2b01e;
+  --fl:#0a6fa3;--fl-bg:#e2f1f9;--fl-line:#a7d3ea;
+  --me:#5b40c9;--me-bg:#eeeafc;--me-line:#c7bcf3;
+  --leaf:#00684a;--leaf2:#00a35c;--leaf-bg:#e5f4ec;
+  --sensor:#2f6fca;--actuator:#c4501c;
+  --display:"Chakra Petch",ui-sans-serif,system-ui,sans-serif;--sans:"IBM Plex Sans",ui-sans-serif,system-ui,"Segoe UI",sans-serif;--mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+  --shadow:0 1px 2px rgb(27 33 39/.06),0 8px 24px -12px rgb(27 33 39/.14);
+}
+*{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
+html{color-scheme:light}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;
+  background-image:linear-gradient(to right,rgb(27 33 39/.035) 1px,transparent 1px),linear-gradient(to bottom,rgb(27 33 39/.035) 1px,transparent 1px);background-size:28px 28px}
+button,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer}
+.mono{font-family:var(--mono)}
+.hidden{display:none!important}
+.mock{font:500 10.5px/1 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--ca);text-align:center;padding:6px 16px;background:repeating-linear-gradient(-45deg,var(--ca-bg) 0 10px,#fbf6ea 10px 20px);border-bottom:1px solid var(--ca-line)}
+
+/* ---------- header + tabs ---------- */
+header.top{position:sticky;top:0;z-index:30;background:color-mix(in oklab,var(--surface) 94%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.bar{max-width:1320px;margin:0 auto;padding:0 24px;display:flex;align-items:center;gap:28px;height:58px}
+.brand{display:flex;align-items:center;gap:10px;font:700 19px/1 var(--display);color:var(--ink);background:none;border:0;padding:0;flex:none}
+.brand b{color:var(--leaf2)}
+.tabs{display:flex;align-items:stretch;gap:2px;height:100%;overflow-x:auto;scrollbar-width:none}
+.tab{position:relative;display:flex;align-items:center;gap:7px;padding:0 14px;background:none;border:0;border-bottom:2px solid transparent;font:600 12.5px var(--display);text-transform:uppercase;letter-spacing:.1em;color:var(--ink3);white-space:nowrap;transition:color .15s,border-color .15s}
+.tab:hover:not([disabled]){color:var(--ink)}
+.tab.on{color:var(--ink);border-bottom-color:var(--leaf2)}
+.tab[disabled]{color:var(--ink4);cursor:not-allowed}
+.tab .lk{width:10px;height:10px;opacity:.7}
+.tab .nd{width:7px;height:7px;border-radius:50%;background:var(--fl)}
+.tab .nd.red{background:var(--stop)} .tab .nd.me{background:var(--me)}
+.lamps{margin-left:auto;display:flex;gap:14px;font:500 10.5px var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);flex:none}
+.lamps span{display:flex;align-items:center;gap:6px}
+.lamp{width:8px;height:8px;border-radius:50%;background:var(--go);box-shadow:0 0 0 3px var(--go-bg)}
+.lamp.warn{background:var(--ca-fill);box-shadow:0 0 0 3px var(--ca-bg)} .lamp.bad{background:var(--stop);box-shadow:0 0 0 3px var(--stop-bg)}
+
+/* run bar */
+.runbar{border-bottom:1px solid var(--line);background:var(--sunk)}
+.runbar .in{max-width:1320px;margin:0 auto;padding:10px 24px;display:flex;align-items:center;gap:20px}
+.spec{flex:0 1 330px;min-width:0}
+.spec .k{font:600 10px var(--display);text-transform:uppercase;letter-spacing:.16em;color:var(--ink4)}
+.spec .q{font-size:13px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.steps{flex:1;display:flex;align-items:center;gap:0;min-width:0}
+.sn{display:flex;align-items:center;gap:8px;background:none;border:0;padding:4px 6px;border-radius:6px;color:var(--ink4);white-space:nowrap}
+.sn:not([disabled]):hover{background:var(--sunk2)}
+.sn[disabled]{cursor:default}
+.sn .c{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;border:2px solid var(--line2);background:var(--surface);font:600 11px var(--mono);transition:all .3s}
+.sn .t{font:600 11px var(--display);text-transform:uppercase;letter-spacing:.08em}
+.sn .s{font:400 10.5px var(--mono);color:var(--ink4)}
+.sn.active{color:var(--ink)} .sn.active .c{border-color:var(--fl);color:var(--fl);animation:ring 1.6s ease-in-out infinite} .sn.active .s{color:var(--fl)}
+.sn.done{color:var(--ink2)} .sn.done .c{border-color:var(--go);background:var(--go);color:#fff}
+.sn.warn .c{border-color:var(--ca-fill);background:var(--ca-bg);color:var(--ca)} .sn.warn{color:var(--ink)} .sn.warn .s{color:var(--ca)}
+.sn.paused .c{border-color:var(--stop);color:var(--stop);animation:none}
+.conn{flex:1;min-width:12px;height:2px;background:var(--line2);border-radius:2px;position:relative;overflow:hidden}
+.conn i{position:absolute;inset:0;width:0;background:var(--go);transition:width .5s}
+.follow{flex:none;display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border-radius:6px;border:1px solid var(--line2);background:var(--surface);font:500 11.5px var(--mono);color:var(--ink3)}
+.follow.on{border-color:var(--fl-line);background:var(--fl-bg);color:var(--fl)}
+.follow .d{width:7px;height:7px;border-radius:50%;background:var(--ink4)}
+.follow.on .d{background:var(--fl);animation:pulse 1.4s ease-in-out infinite}
+
+/* ---------- layout ---------- */
+main{max-width:1320px;margin:0 auto;padding:22px 24px 64px}
+.pane{animation:rise .35s cubic-bezier(.2,.7,.2,1) both}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);min-width:0}
+.ch{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.ch h2,.ch h3{margin:0;font:600 13px var(--display);text-transform:uppercase;letter-spacing:.12em;color:var(--ink)}
+.ch .sub{font:400 12px var(--mono);color:var(--ink3)}
+.ch .r{margin-left:auto;display:flex;gap:8px;align-items:center}
+.cb{padding:16px}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
+.g-side{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px;align-items:start}
+.g-left{display:grid;grid-template-columns:minmax(0,330px) minmax(0,1fr);gap:18px}
+.stack{display:flex;flex-direction:column;gap:18px}
+.lbl{font:600 10.5px var(--display);text-transform:uppercase;letter-spacing:.16em;color:var(--ink3);margin:0 0 10px}
+.pill{display:inline-flex;align-items:center;gap:6px;font:500 10.5px var(--mono);text-transform:uppercase;letter-spacing:.04em;padding:3px 7px;border-radius:4px;border:1px solid;white-space:nowrap}
+.pill i{width:6px;height:6px;border-radius:50%;background:currentColor}
+.pill.go{color:var(--go);background:var(--go-bg);border-color:var(--go-line)}
+.pill.stop{color:var(--stop);background:var(--stop-bg);border-color:var(--stop-line)}
+.pill.ca{color:var(--ca);background:var(--ca-bg);border-color:var(--ca-line)}
+.pill.fl{color:var(--fl);background:var(--fl-bg);border-color:var(--fl-line)} .pill.fl i{animation:pulse 1.4s ease-in-out infinite}
+.pill.me{color:var(--me);background:var(--me-bg);border-color:var(--me-line)}
+.pill.nt{color:var(--ink3);background:var(--sunk);border-color:var(--line2)}
+.empty{border:1px dashed var(--line2);border-radius:10px;padding:48px 20px;text-align:center;color:var(--ink3);background:var(--sunk)}
+.empty b{display:block;font:600 13px var(--display);text-transform:uppercase;letter-spacing:.12em;color:var(--ink2);margin-bottom:6px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:38px;padding:0 15px;border-radius:8px;border:1px solid var(--line2);background:var(--surface);color:var(--ink);font:600 12px var(--display);text-transform:uppercase;letter-spacing:.1em;transition:background .15s,border-color .15s,transform .1s}
+.btn:hover{background:var(--sunk);border-color:var(--ink4)} .btn:active{transform:translateY(1px)}
+.btn.pri{background:var(--leaf);border-color:var(--leaf);color:#fff} .btn.pri:hover{background:#005a40}
+.btn.hz{border-color:var(--ca-line);background:var(--ca-bg);color:var(--ca);position:relative;overflow:hidden}
+.btn.hz::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:repeating-linear-gradient(-45deg,var(--ca-fill) 0 6px,transparent 6px 12px)}
+.btn.red{border-color:var(--stop-line);background:var(--stop-bg);color:var(--stop)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.btn.sm{height:32px;font-size:11px;padding:0 12px}
+.seg{display:inline-flex;border:1px solid var(--line2);border-radius:8px;padding:3px;background:var(--sunk);gap:2px}
+.seg button{border:0;background:none;border-radius:6px;padding:6px 12px;font:500 12.5px var(--sans);color:var(--ink3)}
+.seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgb(0 0 0/.08)}
+.seg button:hover:not(.on){color:var(--ink)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font:600 10px var(--display);text-transform:uppercase;letter-spacing:.14em;color:var(--ink3);padding:8px 10px;border-bottom:1px solid var(--line);background:var(--sunk)}
+td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+td.m{font-family:var(--mono);font-size:12px;color:var(--ink2)}
+tr.click{cursor:pointer} tr.click:hover td{background:var(--sunk)} tr.sel td{background:var(--fl-bg)}
+.led{display:inline-block;width:9px;height:9px;border-radius:50%;background:#d5d8db;box-shadow:inset 0 0 0 1px rgb(0 0 0/.12)}
+.led.on{background:var(--go);box-shadow:0 0 0 3px var(--go-bg)}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:7px 0;font-size:13px;border-bottom:1px dashed var(--line)}
+.kv span:first-child{color:var(--ink3)}
+.metric{border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:12px 14px}
+.metric .k{font:600 10px var(--display);text-transform:uppercase;letter-spacing:.14em;color:var(--ink3)}
+.metric .v{font:500 24px/1.2 var(--mono);margin-top:4px}
+.metric .s{font-size:11.5px;color:var(--ink3);margin-top:2px}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.t-go{color:var(--go)} .t-stop{color:var(--stop)} .t-ca{color:var(--ca)} .t-me{color:var(--me)} .t-fl{color:var(--fl)}
+
+/* ---------- build: hero ---------- */
+.hero{max-width:860px;margin:6vh auto 0}
+.kicker{font:600 11px var(--display);text-transform:uppercase;letter-spacing:.22em;color:var(--leaf2)}
+h1{font:700 clamp(32px,5vw,50px)/1.06 var(--display);letter-spacing:-.01em;margin:12px 0 12px}
+h1 em{font-style:normal;color:var(--leaf)}
+.lede{font-size:16px;line-height:1.6;color:var(--ink2);margin:0 0 28px;max-width:640px}
+.composer{background:var(--surface);border:1px solid var(--line2);border-radius:12px;box-shadow:0 18px 40px -24px rgb(27 33 39/.3);transition:border-color .2s,box-shadow .2s}
+.composer:focus-within{border-color:var(--leaf2);box-shadow:0 0 0 4px var(--leaf-bg),0 18px 40px -24px rgb(27 33 39/.3)}
+.composer textarea{display:block;width:100%;min-height:128px;resize:vertical;border:0;background:transparent;padding:18px 20px 8px;font-size:15.5px;line-height:1.6;color:var(--ink);outline:none}
+.composer textarea::placeholder{color:var(--ink4)}
+.cbar{display:flex;align-items:center;gap:10px;padding:10px 12px 12px 18px;flex-wrap:wrap;border-top:1px solid var(--line);background:var(--sunk);border-radius:0 0 12px 12px}
+.cbar select{background:var(--surface);border:1px solid var(--line2);border-radius:6px;height:30px;padding:0 8px;font:400 12px var(--mono);color:var(--ink2)}
+.gen{margin-left:auto}
+.gen.nudge{animation:nudge 1s ease-in-out 2}
+.examples{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.ex{text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;transition:border-color .15s,transform .15s,box-shadow .15s;box-shadow:0 1px 2px rgb(0 0 0/.04)}
+.ex:hover{border-color:var(--leaf2);transform:translateY(-2px);box-shadow:var(--shadow)}
+.ex .t{display:flex;align-items:center;gap:9px;font:600 14px var(--display);letter-spacing:.02em}
+.ex .t svg{flex:none;color:var(--leaf2)}
+.ex p{margin:6px 0 10px;font-size:13px;line-height:1.5;color:var(--ink2)}
+.ex .m{font:400 11px var(--mono);color:var(--ink4)}
+
+/* build: steps */
+.reqs{display:flex;flex-direction:column;gap:8px}
+.req{display:grid;grid-template-columns:30px 1fr;gap:8px;border:1px solid var(--line);background:var(--sunk);border-radius:8px;padding:9px 11px;font-size:13px;line-height:1.45;color:var(--ink2);animation:rise .35s both}
+.req b{font:500 11px var(--mono);color:var(--ink3);padding-top:2px}
+.sf{display:inline-block;margin-left:6px;font:500 9.5px var(--mono);text-transform:uppercase;color:var(--ca);border:1px solid var(--ca-line);background:var(--ca-bg);border-radius:3px;padding:1px 4px;vertical-align:1px}
+.editor{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fbfbf9}
+.etabs{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line);font:400 11.5px var(--mono);color:var(--ink3);background:var(--sunk)}
+.etabs .f{color:var(--ink);font-weight:500}
+.etabs .r{margin-left:auto}
+.code{font:400 12.5px/1.7 var(--mono);padding:10px 0;height:440px;overflow:auto;color:var(--ink)}
+.ln{display:grid;grid-template-columns:46px 1fr;white-space:pre}
+.ln>b{font-weight:400;color:var(--ink4);text-align:right;padding-right:14px;user-select:none}
+.ln.hw{background:var(--leaf-bg);animation:flash 1.2s ease-out}
+.ln.add{background:var(--go-bg)} .ln.add>b{color:var(--go)}
+.ln.del{background:var(--stop-bg);color:var(--stop);text-decoration:line-through}
+.caret{display:inline-block;width:7px;height:15px;background:var(--fl);vertical-align:-2px;animation:blink 1s steps(1) infinite}
+.kw{color:#2149b8;font-weight:500}.ty{color:#0a6fa3}.cm{color:#8a9198;font-style:italic}.ad{color:var(--leaf);font-weight:600}.nu{color:#a35400}
+.note{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;color:var(--ink3)}
+.note .sq{width:12px;height:12px;border-radius:3px;background:var(--leaf-bg);border:1px solid var(--go-line);flex:none}
+.chain{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.cn{border:1px solid var(--line);background:var(--sunk);border-radius:8px;padding:12px;transition:all .3s}
+.cn .k{font:600 10px var(--display);text-transform:uppercase;letter-spacing:.14em;color:var(--ink3)}
+.cn .v{margin-top:4px;font:500 13px var(--mono);color:var(--ink3)}
+.cn.on{border-color:var(--go-line);background:var(--go-bg)} .cn.on .v{color:var(--go)}
+.cn.busy{border-color:var(--fl-line);background:var(--fl-bg)} .cn.busy .v{color:var(--fl)}
+.term{border:1px solid var(--line);background:#fbfbf9;border-radius:8px;font:400 12.5px/1.8 var(--mono);padding:14px 16px;min-height:260px;max-height:420px;overflow:auto;color:var(--ink2)}
+.term div{animation:rise .25s both;white-space:pre-wrap}
+.term .ok{color:var(--go)} .term .dim{color:var(--ink4)} .term .hi{color:var(--fl)}
+.checklist{display:flex;flex-direction:column;gap:7px}
+.ci{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--ink4);padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--sunk);transition:all .3s}
+.ci .b{width:16px;height:16px;border-radius:50%;border:2px solid var(--line2);flex:none;display:grid;place-items:center}
+.ci.doing{color:var(--ink);border-color:var(--fl-line);background:var(--fl-bg)} .ci.doing .b{border-color:var(--fl);border-top-color:transparent;animation:spin .8s linear infinite}
+.ci.done{color:var(--ink2);background:var(--surface)} .ci.done .b{border-color:var(--go);background:var(--go)}
+.ci.done .b::after{content:"";width:6px;height:3px;border:2px solid #fff;border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px)}
+.progress{height:5px;border-radius:5px;background:var(--sunk2);overflow:hidden;margin-bottom:14px}
+.progress i{display:block;height:100%;width:0;background:var(--fl);transition:width .4s}
+.tests{display:flex;flex-direction:column;gap:6px}
+.test{display:grid;grid-template-columns:24px 1fr auto;gap:10px;align-items:center;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-size:13px;color:var(--ink3);transition:all .3s}
+.test .i{width:18px;height:18px;border-radius:50%;border:2px solid var(--line2);display:grid;place-items:center;font:700 10px var(--mono);color:#fff}
+.test.run{color:var(--ink);border-color:var(--fl-line);background:var(--fl-bg)} .test.run .i{border-color:var(--fl);border-top-color:transparent;animation:spin .8s linear infinite}
+.test.pass{color:var(--ink)} .test.pass .i{border-color:var(--go);background:var(--go)}
+.test.fail{color:var(--stop);border-color:var(--stop-line);background:var(--stop-bg)} .test.fail .i{border-color:var(--stop);background:var(--stop)}
+.test.click{cursor:pointer} .test.click:hover{border-color:var(--ink4)} .test.sel{box-shadow:0 0 0 2px var(--fl-line)}
+.test .rq{font:400 11px var(--mono);color:var(--ink4)}
+.test .id{font:500 11px var(--mono);color:var(--ink4);margin-right:6px}
+.repair{border:1px solid var(--me-line);background:var(--me-bg);border-radius:10px;padding:14px 16px;animation:rise .4s both}
+.repair h3{margin:0 0 8px;font:600 12px var(--display);text-transform:uppercase;letter-spacing:.14em;color:var(--me)}
+.repair p{margin:0 0 10px;font-size:13px;line-height:1.55;color:var(--ink2)}
+.diff{font:400 12px/1.7 var(--mono);border:1px solid var(--line);border-radius:6px;background:var(--surface);padding:6px 0;overflow:auto}
+.diff div{padding:0 12px 0 24px;text-indent:-12px;white-space:pre-wrap;word-break:break-word}
+.diff .p{background:var(--go-bg);color:var(--go)} .diff .m{background:var(--stop-bg);color:var(--stop)} .diff .c{color:var(--ink3)}
+.done-hero{display:flex;align-items:center;gap:18px;margin-bottom:22px}
+.seal{width:64px;height:64px;border-radius:50%;display:grid;place-items:center;background:var(--go-bg);border:2px solid var(--go);color:var(--go);animation:pop .5s cubic-bezier(.2,.9,.3,1.4) both;flex:none}
+.done-hero h2{margin:0;font:700 26px var(--display)}
+.done-hero p{margin:4px 0 0;color:var(--ink2)}
+.next{display:flex;gap:10px;flex-wrap:wrap}
+
+/* ---------- HMI ---------- */
+.hmi{border:1px solid var(--line2);border-radius:10px;background:#e7e6e1;overflow:hidden}
+.hmi-bar{display:flex;align-items:center;gap:12px;padding:9px 14px;background:#d9d7d1;border-bottom:1px solid var(--line2);font:500 11.5px var(--mono);color:var(--ink2)}
+.alarm{margin-left:auto;padding:4px 9px;border-radius:4px;border:1px solid var(--line2);background:#eceae5;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em;font-size:10.5px}
+.alarm.on{border-color:var(--stop);background:var(--stop);color:#fff;animation:pulse 1s ease-in-out infinite}
+.alarm.forced{border-color:var(--ca-fill);background:var(--ca-bg);color:var(--ca)}
+.hmi svg{display:block;width:100%;height:auto}
+.bld{opacity:0;transform:translateY(6px);transition:opacity .5s,transform .5s}
+.bld.in{opacity:1;transform:none}
+.hbtn{cursor:pointer} .hbtn:hover{filter:brightness(1.1)}
+.belt{stroke-dasharray:4 10} .belt.run{animation:belt .5s linear infinite}
+.hint{font-size:12.5px;color:var(--ink3);line-height:1.5;margin:12px 2px 0}
+.dcv{position:relative;aspect-ratio:16/10;border-radius:8px;overflow:hidden;background:linear-gradient(180deg,#c9d2da,#8d99a4);border:1px solid var(--line2)}
+.dcv .tag{position:absolute;left:8px;top:8px}
+.dcv .ip{position:absolute;right:8px;bottom:8px;font:400 10.5px var(--mono);color:#fff;background:rgb(0 0 0/.35);padding:2px 6px;border-radius:4px}
+.forced{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--ca-line);background:var(--ca-bg);border-radius:8px;padding:8px 12px;font-size:13px;position:relative;overflow:hidden}
+.forced::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:repeating-linear-gradient(-45deg,var(--ca-fill) 0 4px,transparent 4px 8px)}
+select.f{width:100%;height:36px;border:1px solid var(--line2);border-radius:6px;background:var(--surface);padding:0 8px;font-size:13px}
+
+/* ---------- harness ---------- */
+.vtrack{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding:4px 2px 8px}
+.vnode{flex:none;width:168px;border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:12px;position:relative}
+.vnode .v{font:600 18px var(--mono)}
+.vnode .d{font-size:12px;color:var(--ink2);margin:4px 0 8px;line-height:1.4;min-height:34px}
+.vnode.cur{border-color:var(--me);box-shadow:0 0 0 3px var(--me-bg)}
+.vnode.dead{background:var(--sunk);opacity:.85}
+.varrow{flex:none;width:28px;display:grid;place-items:center;color:var(--ink4)}
+.bars{display:flex;flex-direction:column;gap:14px}
+.brow .top{display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px}
+.brow .top b{font:600 13px var(--mono)}
+.btrack{height:22px;border-radius:6px;background:var(--sunk2);overflow:hidden}
+.btrack i{display:block;height:100%;border-radius:6px;transition:width 1s cubic-bezier(.2,.7,.2,1)}
+
+/* ---------- log ---------- */
+.lesson{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:start;padding:11px 0;border-bottom:1px solid var(--line);font-size:13.5px;line-height:1.5}
+.lesson .n{font:500 11px var(--mono);color:var(--ink4);padding-top:2px}
+.lesson .src{font:400 11px var(--mono);color:var(--ink3);text-align:right;white-space:nowrap}
+.lesson.new{background:linear-gradient(90deg,var(--me-bg),transparent);margin:0 -16px;padding:11px 16px}
+.wf{display:flex;flex-direction:column;gap:5px;font:400 12px var(--mono)}
+.wfr{display:grid;grid-template-columns:230px 1fr 60px;gap:10px;align-items:center}
+.wfr .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wfr .nm span{color:var(--ink4)}
+.wfr .bar{position:relative;height:16px;background:var(--sunk);border-radius:3px}
+.wfr .bar i{position:absolute;top:3px;height:10px;border-radius:2px}
+.wfr .ms{text-align:right;color:var(--ink3)}
+.wfr.err .nm{color:var(--stop)}
+.ck{display:flex;gap:6px;flex-wrap:wrap}
+.ev{display:grid;grid-template-columns:70px 1fr;gap:10px;font:400 12px/1.5 var(--mono);padding:5px 0;border-bottom:1px dashed var(--line);color:var(--ink2)}
+.ev span:first-child{color:var(--ink4)}
+.ev.err span:last-child{color:var(--stop)} .ev.meta span:last-child{color:var(--me)}
+
+/* ---------- export modal ---------- */
+.scrim{position:fixed;inset:0;z-index:80;background:rgb(27 33 39/.38);backdrop-filter:blur(2px);display:grid;place-items:center;padding:20px;animation:fade .2s both}
+.modal{width:min(820px,100%);max-height:calc(100vh - 40px);overflow:auto;background:var(--surface);border:1px solid var(--line2);border-radius:14px;box-shadow:0 30px 80px -20px rgb(27 33 39/.45);animation:rise .3s cubic-bezier(.2,.7,.2,1) both}
+.mh{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line)}
+.mh h2{margin:0;font:600 15px var(--display);text-transform:uppercase;letter-spacing:.12em}
+.mh .x{margin-left:auto;width:32px;height:32px;border-radius:8px;border:1px solid var(--line2);background:var(--surface);color:var(--ink3)}
+.mh .x:hover{color:var(--ink);background:var(--sunk)}
+.mb{padding:20px}
+.targets{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:20px}
+.tg{text-align:left;border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:12px;transition:border-color .15s,box-shadow .15s}
+.tg:hover{border-color:var(--ink4)}
+.tg.on{border-color:var(--leaf2);box-shadow:0 0 0 3px var(--leaf-bg)}
+.tg .n{font:600 13px var(--display);letter-spacing:.02em}
+.tg .f{font:400 11px var(--mono);color:var(--ink3);margin-top:3px}
+.tg .ok{margin-top:8px}
+.incl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin:0 0 18px;padding:0;list-style:none;font-size:13px;color:var(--ink2)}
+.incl li{display:flex;gap:8px;align-items:flex-start} .incl li::before{content:"✓";color:var(--go);font-weight:700}
+.mf{display:flex;align-items:center;gap:10px;padding:14px 20px;border-top:1px solid var(--line);background:var(--sunk);border-radius:0 0 14px 14px;flex-wrap:wrap}
+.mf .fn{font:400 12px var(--mono);color:var(--ink3)}
+.mf .r{margin-left:auto;display:flex;gap:10px}
+.warnbox{border:1px solid var(--ca-line);background:var(--ca-bg);border-radius:8px;padding:10px 12px;font-size:12.5px;color:var(--ca);line-height:1.5;margin-top:14px}
+@keyframes fade{from{opacity:0}}
+@media (max-width:760px){.targets{grid-template-columns:repeat(2,minmax(0,1fr))}.incl{grid-template-columns:minmax(0,1fr)}}
+
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes ring{0%,100%{box-shadow:0 0 0 3px var(--fl-bg)}50%{box-shadow:0 0 0 6px var(--fl-bg)}}
+@keyframes blink{50%{opacity:0}}
+@keyframes flash{from{background:#bfe7cf}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes belt{to{stroke-dashoffset:-28}}
+@keyframes pop{from{transform:scale(.5);opacity:0}}
+@keyframes nudge{50%{box-shadow:0 0 0 6px var(--leaf-bg)}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}
+@media (max-width:1100px){.g-side,.g-left,.grid2{grid-template-columns:minmax(0,1fr)}.sn .s{display:none}.spec{display:none}}
+@media (max-width:760px){.bar{gap:12px;padding:0 16px}.lamps{display:none}main{padding:16px}.runbar .in{padding:10px 16px}.sn .t{display:none}.examples,.chain,.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.examples{grid-template-columns:minmax(0,1fr)}.wfr{grid-template-columns:130px 1fr 48px}.code{height:340px}}
+</style>
+<style id="mm-theme">
+/* MongoMation design system: same components & copy as Ali's mock, our visual language */
+:root{
+  --bg:#FFFFFF;--surface:#FFFFFF;--sunk:#FAFAFB;--sunk2:#F3F3F4;--line:#E7E7E9;--line2:#D9D9DC;
+  --ink:#0B0B0C;--ink2:#3A3D42;--ink3:#6B7079;--ink4:#A0A4AB;
+  --go:#0B0B0C;--go-bg:#F3F3F4;--go-line:#D9D9DC;
+  --fl:#FF5A1F;--fl-bg:#FFF1EB;--fl-line:#FFC9B3;
+  --me:#0B0B0C;--me-bg:#F6F6F7;--me-line:#D9D9DC;
+  --leaf:#0B0B0C;--leaf2:#FF5A1F;--leaf-bg:#FFF4EF;
+  --stop:#D7261E;--stop-bg:#FDF0EF;--stop-line:#F2C2BF;
+  --ca:#8A5A00;--ca-bg:#FFF8E6;--ca-line:#F0D99A;--ca-fill:#F2B01E;
+  --sensor:#0B0B0C;--actuator:#FF5A1F;
+  --display:"Geist",ui-sans-serif,system-ui,sans-serif;--sans:"Geist",ui-sans-serif,system-ui,sans-serif;--mono:"Geist Mono",ui-monospace,Menlo,Consolas,monospace;
+  --shadow:none;--ease:cubic-bezier(.2,.8,.2,1);
+}
+body{background:#fff;background-image:none;font-size:14px}
+.mock{color:var(--ink3);background:repeating-linear-gradient(-45deg,#F6F6F7 0 10px,#fff 10px 20px);border-bottom-color:var(--line);letter-spacing:.1em}
+header.top{background:rgba(255,255,255,.92)}
+.brand{font:600 16px var(--sans);letter-spacing:-.01em;gap:10px}.brand b{color:var(--ink);font-weight:600}
+.tab{font:500 13px var(--sans);text-transform:none;letter-spacing:0;color:var(--ink3);padding:0 12px;transition:color .2s var(--ease),border-color .2s var(--ease)}
+.tab.on{border-bottom-color:var(--fl)}
+.tab .nd{width:6px;height:6px;background:var(--fl)} .tab .nd.me{background:var(--ink)}
+.lamps{font:500 11px var(--mono);letter-spacing:.06em}
+.lamp{width:6px;height:6px;background:var(--ink);box-shadow:none}
+.lamp.bad{background:var(--stop);box-shadow:none}
+.runbar{background:#fff}
+.spec .k,.lbl,.metric .k,.cn .k,th,.kicker,.etabs,.sn .t{font-family:var(--mono)!important;font-weight:500!important;font-size:11px!important;letter-spacing:.08em!important;text-transform:uppercase}
+.spec .k,.lbl,.metric .k,.cn .k,th,.kicker{color:var(--ink3)}
+.sn .c{width:22px;height:22px;border-width:1px;font:500 10px var(--mono)}
+.sn.active .c{border-color:var(--fl);color:var(--fl);animation:breathe 2.4s ease-in-out infinite}
+.sn.done .c{background:var(--ink);border-color:var(--ink)}
+.conn{height:1px}.conn i{background:var(--fl)}
+.follow{border-radius:6px;font:500 11px var(--mono)}
+.follow.on{background:#fff;border-color:var(--ink);color:var(--ink)} .follow.on .d{background:var(--fl);animation:breathe 2.4s ease-in-out infinite}
+@keyframes breathe{50%{box-shadow:0 0 0 5px rgba(255,90,31,.15)}}
+.card{border-radius:8px;box-shadow:none}
+.ch{padding:14px 18px}
+.ch h2,.ch h3{font:500 15px var(--sans);text-transform:none;letter-spacing:-.01em}
+.ch .sub{font:400 12px var(--mono)}
+.cb{padding:18px}
+.pill{border:0!important;background:transparent!important;padding:0;font:500 11px var(--mono);text-transform:lowercase;letter-spacing:.02em;color:var(--ink2)}
+.pill i{width:6px;height:6px}
+.pill.go{color:var(--ink)} .pill.nt{color:var(--ink4)} .pill.nt::before{content:"";width:6px;height:6px;border-radius:50%;border:1px solid var(--ink4)}
+.pill.fl{color:var(--fl)} .pill.fl i{animation:breathe 2.4s ease-in-out infinite}
+.pill.stop{color:var(--stop)} .pill.ca{color:var(--ca)} .pill.me{color:var(--ink)}
+.sf{border:0;background:transparent;color:var(--stop);padding:0;font:500 10px var(--mono);letter-spacing:.06em}
+.sf::before{content:"· "}
+.btn{height:40px;border-radius:6px;font:500 13px var(--sans);text-transform:none;letter-spacing:0;border-color:var(--line2);transition:transform .12s var(--ease),border-color .2s var(--ease),background .2s var(--ease)}
+.btn:hover{background:#fff;border-color:var(--ink)} .btn:active{transform:scale(.98)}
+.btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(255,90,31,.45)}
+.btn.pri{background:var(--ink);border-color:var(--ink)} .btn.pri:hover{background:#26282C}
+.btn.sm{height:32px;font-size:12px}
+.btn.hz{background:#fff;color:var(--ink);border-color:var(--line2)} .btn.hz::after{height:2px}
+.btn.red{background:#fff;color:var(--stop);border-color:var(--stop-line)}
+.seg{border-radius:6px;background:#fff;padding:2px}
+.seg button{font:500 12.5px var(--sans);border-radius:4px}
+.seg button.on{background:var(--ink);color:#fff;box-shadow:none}
+.hero{margin-top:7vh}
+.kicker{letter-spacing:.12em!important}
+h1{font:500 clamp(36px,5vw,56px)/1.02 var(--sans);letter-spacing:-.035em}
+h1 em{color:var(--ink4)}
+.lede{font-size:15px;color:var(--ink3)}
+.composer{border-radius:8px;box-shadow:none;border-color:var(--line2)}
+.composer:focus-within{border-color:var(--ink);box-shadow:0 0 0 3px rgba(255,90,31,.25)}
+.composer textarea{font-size:15px}
+.cbar{background:#fff;border-radius:0 0 8px 8px}
+.ex{border-radius:8px;box-shadow:none;transition:border-color .2s var(--ease),transform .2s var(--ease)}
+.ex:hover{border-color:var(--ink);box-shadow:none;transform:translateY(-2px)}
+.ex .t{font:500 14px var(--sans);letter-spacing:-.005em} .ex .t svg{color:var(--fl)}
+.editor{border-radius:6px;background:#fff}
+.ln.hw{background:#FFF7F3} .ln.add{background:#F3F3F4} .ln.add>b{color:var(--fl)}
+.kw{color:var(--ink);font-weight:600}.ty{color:var(--ink3)}.ad{color:var(--fl);font-weight:500}.nu{color:var(--fl)}
+.note .sq{background:#FFF7F3;border-color:var(--fl-line)}
+.caret{background:var(--fl)}
+.cn{background:#fff;border-radius:6px} .cn.on{background:#fff;border-color:var(--ink)} .cn.on .v{color:var(--ink)}
+.cn.busy{background:var(--fl-bg)}
+.term{background:#fff;border-radius:6px} .term .ok{color:var(--ink)} .term .hi{color:var(--fl)}
+.req{background:#fff;border-radius:6px}
+.ci{background:#fff;border-radius:6px} .ci.done .b{background:var(--ink);border-color:var(--ink)}
+.test{border-radius:6px} .test.pass .i{background:var(--ink);border-color:var(--ink)}
+.test.run{background:var(--fl-bg)} .test.sel{box-shadow:0 0 0 1px var(--ink)}
+.progress{height:2px} .progress i{background:var(--fl)}
+.repair{background:#fff;border-color:var(--line2);border-left:2px solid var(--fl);border-radius:6px} .repair h3{color:var(--ink);font:500 11px var(--mono);letter-spacing:.08em}
+.diff{border-radius:4px} .diff .p{background:#FFF7F3;color:var(--ink)}
+.seal{background:#fff;border:1px solid var(--ink);color:var(--fl);width:56px;height:56px}
+.done-hero h2{font:500 28px var(--sans);letter-spacing:-.02em}
+.metric{border-radius:6px} .metric .v{font:500 26px/1.15 var(--mono);letter-spacing:-.02em}
+.t-go{color:var(--ink)} .t-me{color:var(--ink)} .t-fl{color:var(--fl)}
+tr.sel td{background:var(--fl-bg)}
+.led.on{background:var(--fl);box-shadow:0 0 0 3px var(--fl-bg)}
+.hmi{background:#F7F7F8;border-color:var(--line2);border-radius:8px} .hmi-bar{background:#EFEFF1;font:500 11px var(--mono)}
+.alarm.on{background:var(--stop);border-color:var(--stop)}
+.dcv,.forced{border-radius:6px}
+select.f,.cbar select{border-radius:6px;font-family:var(--mono)}
+.vnode{border-radius:8px} .vnode.cur{border-color:var(--ink);box-shadow:0 0 0 3px var(--fl-bg)} .vnode .v{font:500 18px var(--mono)}
+.btrack{height:10px;border-radius:2px} .btrack i{border-radius:2px}
+.lesson.new{background:linear-gradient(90deg,var(--fl-bg),transparent)}
+.ev.meta span:last-child{color:var(--fl)}
+.modal{border-radius:10px;box-shadow:0 30px 80px rgba(11,11,12,.18)} .mh h2{font:500 16px var(--sans);text-transform:none;letter-spacing:-.01em}
+.tg{border-radius:6px} .tg.on{border-color:var(--ink);box-shadow:0 0 0 3px var(--fl-bg)} .tg .n{font:500 13px var(--sans)}
+.incl li::before{color:var(--fl)}
+.empty{border-radius:8px;background:#fff} .empty b{font:500 11px var(--mono);letter-spacing:.08em}
+@keyframes flash{from{background:#FFE3D6}}
+td .sf{display:block;margin:4px 0 0!important} td .sf::before{content:""}
+</style>
+<style id="dash">
+/* ================= dashboard shell (Agent B) ================= */
+:root{--ease:cubic-bezier(.2,.8,.2,1);--glass:rgba(255,255,255,.86);--top:52px}
+html,body{height:100%;overflow:hidden}
+body{display:grid;grid-template-rows:var(--top) auto minmax(0,1fr) auto;background:#fff}
+.mock{display:none}
+#veil{position:fixed;inset:0;z-index:200;background:#fff;pointer-events:none;transition:opacity .7s var(--ease)}
+#veil.off{opacity:0}
+/* top bar */
+.dtop{display:flex;align-items:center;gap:18px;padding:0 20px;border-bottom:1px solid var(--line);background:#fff;z-index:20;min-width:0}
+.dtop .brand{font:600 15px var(--sans)}
+.back{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 10px 0 8px;border-radius:6px;border:1px solid var(--line);font:500 12px var(--mono);color:var(--ink);text-decoration:none;transition:border-color .2s var(--ease),transform .2s var(--ease)}
+.back:hover{border-color:var(--ink)} .back:hover span{transform:translateX(-3px)} .back span{transition:transform .2s var(--ease)}
+.crumbs{display:flex;gap:8px;align-items:center;font:500 12px var(--mono);color:var(--ink3);white-space:nowrap;overflow:hidden;min-width:0}
+.crumbs b{color:var(--ink);font-weight:500}.crumbs .sep{opacity:.4}
+.dtop .lamps{margin-left:auto}
+.mode{display:inline-flex;border:1px solid var(--line);border-radius:6px;padding:2px;gap:2px;flex:none}
+.mode button{border:0;background:none;border-radius:4px;padding:4px 10px;font:500 11.5px var(--mono);color:var(--ink3);transition:background .2s var(--ease),color .2s var(--ease)}
+.mode button.on{background:var(--ink);color:#fff}
+.mode button[data-m=live].on{background:var(--fl)}
+/* runbar = Ali's run stepper, full width */
+header.top{position:relative;top:auto}
+header.top .runbar{border-bottom:1px solid var(--line)}
+.runbar .in{max-width:none;padding:8px 20px}
+/* main split */
+#split{display:grid;grid-template-columns:minmax(0,58fr) minmax(0,42fr);min-height:0}
+#stage{position:relative;min-height:0;overflow:hidden;background:#F6F7F9;border-right:1px solid var(--line)}
+#world,#rack{position:absolute;inset:0}
+#rack{display:none;background:#F6F7F9}
+#stage.comp #rack{display:block} #stage.comp #world{visibility:hidden}
+.hud{position:absolute;z-index:5;background:var(--glass);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:8px}
+/* PLC state card */
+#plc{left:16px;top:16px;padding:12px 14px;min-width:260px;animation:rise .5s var(--ease) both .2s}
+#plc .k{font:500 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);display:flex;gap:8px;align-items:center}
+#plc .state{display:flex;align-items:center;gap:10px;margin:8px 0 10px;font:500 22px/1 var(--mono);letter-spacing:-.02em}
+#plc .state .d{width:8px;height:8px;border-radius:50%;background:var(--ink4);transition:background .3s}
+#plc .state.run .d{background:var(--fl);animation:breathe 2.4s ease-in-out infinite}
+#plc .state.dep .d{background:var(--fl);animation:pulse 1s infinite}
+#plc .state small{font:400 11px var(--mono);color:var(--ink3);letter-spacing:0}
+#plc dl{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;margin:0;font:400 11.5px var(--mono)}
+#plc dt{color:var(--ink3)} #plc dd{margin:0;color:var(--ink);text-align:right;font-variant-numeric:tabular-nums}
+/* shot switcher */
+#shots{right:16px;top:16px;display:flex;gap:2px;padding:3px;animation:rise .5s var(--ease) both .3s}
+#shots button{border:0;background:none;padding:6px 10px;border-radius:5px;font:500 11.5px var(--mono);color:var(--ink3);transition:background .2s var(--ease),color .2s var(--ease)}
+#shots button:hover{color:var(--ink)}
+#shots button.on{background:var(--ink);color:#fff}
+#shots .sep{width:1px;background:var(--line);margin:4px 3px}
+#shots button.auto.on{background:#fff;color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+#shots button.auto.on::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--fl);margin-right:6px;vertical-align:1px;animation:breathe 2.4s ease-in-out infinite}
+#shots button[disabled]{opacity:.35;cursor:not-allowed}
+/* stage caption */
+#cap{left:16px;bottom:16px;padding:10px 14px;display:flex;align-items:center;gap:12px;max-width:min(560px,70%)}
+#cap .n{font:500 11px var(--mono);color:var(--fl);letter-spacing:.08em}
+#cap .t{font:500 13px var(--sans)}
+#cap .s{font:400 11.5px var(--mono);color:var(--ink3)}
+#cap.swap{animation:capin .45s var(--ease)}
+@keyframes capin{from{opacity:0;transform:translateY(6px)}}
+/* alarm banner on stage */
+#alarmHud{right:16px;bottom:16px;padding:9px 12px;display:flex;align-items:center;gap:10px;font:500 12px var(--mono);opacity:0;transform:translateY(8px);transition:opacity .3s var(--ease),transform .3s var(--ease)}
+#alarmHud.on{opacity:1;transform:none}
+#alarmHud i{width:6px;height:6px;border-radius:50%;background:var(--stop);animation:pulse 1s infinite}
+#alarmHud.forced i{background:var(--ca-fill)}
+#alarmHud.alarm{border-color:var(--stop-line);color:var(--stop)} #alarmHud.forced{border-color:var(--ca-line);color:var(--ca)}
+/* compact floating labels on the dashboard: name + value; address only on the focused tag */
+#world .f3d-label{font-size:11px;padding:4px 8px;gap:8px}
+#world .f3d-label .a{display:none} #world .f3d-label.focus .a{display:inline}
+/* right: workflow */
+#work{display:flex;flex-direction:column;min-height:0;min-width:0;background:#fff}
+#work .wtabs{display:flex;align-items:stretch;height:44px;border-bottom:1px solid var(--line);padding:0 12px;flex:none;gap:4px}
+#work .tabs{height:100%}
+#work .tab{padding:0 10px}
+#scroll{flex:1;overflow:auto;min-height:0;scroll-behavior:smooth}
+main{max-width:none;padding:18px 20px 40px}
+/* Ali's components, tuned for the 42% column */
+.g-left,.g-side,.grid2{grid-template-columns:minmax(0,1fr)!important}
+.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+.chain{grid-template-columns:repeat(2,minmax(0,1fr))}
+.code{height:320px}
+.hero{margin:2vh 0 0;max-width:none}
+h1{font-size:clamp(28px,2.5vw,40px)}
+.lede{font-size:14px;margin-bottom:18px}
+.composer textarea{min-height:110px;font-size:14px}
+.examples{grid-template-columns:repeat(2,minmax(0,1fr))}
+.ex p{font-size:12.5px}
+.wfr{grid-template-columns:150px 1fr 52px}
+.targets{grid-template-columns:repeat(2,minmax(0,1fr))}
+.done-hero h2{font-size:24px}
+.sn .s{max-width:120px;overflow:hidden;text-overflow:ellipsis}
+.livebox{border:1px dashed var(--line2);border-radius:8px;padding:12px 14px;font:400 12px/1.6 var(--mono);color:var(--ink3);margin-top:14px}
+.livebox b{color:var(--ink);font-weight:500}
+/* bottom strip: live IO + operator panel */
+#strip{display:grid;grid-template-columns:minmax(0,1fr) 380px;border-top:1px solid var(--line);background:#fff;min-height:0}
+#io{padding:8px 16px 8px 20px;min-width:0;overflow:hidden}
+.sh{display:flex;align-items:center;gap:14px;margin-bottom:8px;font:500 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.sh b{color:var(--ink);font-weight:500}
+.sh .src{margin-left:auto;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:6px}
+.sh .src i{width:6px;height:6px;border-radius:50%;background:var(--fl);animation:breathe 2.4s ease-in-out infinite}
+.sh .src.stale i{background:var(--ink4);animation:none}
+.iogrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) 14px repeat(3,minmax(0,1fr));grid-auto-flow:column;grid-template-rows:repeat(4,auto);gap:4px 6px}
+.iogrid .gap{grid-row:1/span 4}
+.io{all:unset;box-sizing:border-box;display:grid;grid-template-columns:8px minmax(0,1fr) auto;column-gap:7px;align-items:center;padding:3px 8px;border:1px solid transparent;border-radius:5px;cursor:pointer;min-width:0;transition:border-color .2s var(--ease),background .2s var(--ease)}
+.io:hover{border-color:var(--line)}
+.io.sel{border-color:var(--ink);background:#fff}
+.io .led{width:7px;height:7px;transition:background .15s,box-shadow .15s}
+.io .n{font:500 12px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.io .v{font:500 11px var(--mono);color:var(--ink4);font-variant-numeric:tabular-nums}
+.io.on .v{color:var(--fl)}
+.io .a{grid-column:2/4;font:400 10.5px var(--mono);color:var(--ink4);display:flex;gap:6px;white-space:nowrap;overflow:hidden}
+.io .f{display:none;font:600 9.5px/1 var(--mono);color:#fff;background:var(--ca-fill);border-radius:2px;padding:2px 4px}
+.io.forced{background:var(--ca-bg)} .io.forced .f{display:inline-block} .io.forced .v{color:var(--ca)}
+.io.chg .v{animation:vflash .6s var(--ease)}
+@keyframes vflash{from{background:#FFE3D6;border-radius:2px}}
+/* operator panel */
+#op{border-left:1px solid var(--line);padding:10px 18px 12px;display:flex;flex-direction:column;gap:8px;min-width:0;transition:box-shadow .4s var(--ease)}
+#op.flash{box-shadow:inset 0 0 0 2px var(--fl)}
+.opr{display:flex;align-items:center;gap:8px}
+.ob{height:34px;padding:0 12px;border-radius:6px;border:1px solid var(--line2);background:#fff;font:500 12.5px var(--sans);display:inline-flex;align-items:center;gap:7px;transition:transform .12s var(--ease),border-color .2s var(--ease),background .2s}
+.ob:hover{border-color:var(--ink)} .ob:active{transform:scale(.96)}
+.ob.pri{background:var(--ink);color:#fff;border-color:var(--ink)}
+.ob[disabled]{opacity:.4;cursor:not-allowed}
+.estop{width:40px;height:40px;border-radius:50%;border:3px solid var(--ca-fill);background:var(--stop);color:#fff;font:600 8.5px var(--mono);letter-spacing:.02em;margin-left:auto;flex:none;transition:transform .12s var(--ease),box-shadow .2s}
+.estop:active{transform:scale(.92)} .estop.latched{box-shadow:0 0 0 4px var(--stop-bg);animation:pulse 1s infinite}
+.lamps3{display:flex;gap:12px;font:500 10.5px var(--mono);color:var(--ink3);text-transform:lowercase;letter-spacing:.02em}
+.lamps3 span{display:flex;align-items:center;gap:6px}
+.lamps3 i{width:6px;height:6px;border-radius:50%;background:var(--line2);transition:background .2s}
+.lamps3 .on.r i{background:var(--fl);animation:breathe 2.4s ease-in-out infinite} .lamps3 .on.f i{background:var(--ca-fill)} .lamps3 .on.s i{background:var(--ink)}
+.cnt{margin-left:auto;display:flex;align-items:baseline;gap:8px;font:400 10.5px var(--mono);color:var(--ink3);letter-spacing:.08em}
+.cnt b{font:500 22px/1 var(--mono);color:var(--ink);letter-spacing:-.02em;font-variant-numeric:tabular-nums;display:inline-block}
+.cnt b.tick{animation:tick .35s var(--ease)}
+@keyframes tick{from{transform:translateY(-5px);opacity:.3}}
+.fi{display:flex;gap:6px;align-items:center}
+.fi select{flex:1;min-width:0;height:30px;border:1px solid var(--line2);border-radius:6px;background:#fff;font:400 11.5px var(--mono);padding:0 6px}
+.fi .ob{height:30px;font-size:12px}
+.ophint{font:400 11px var(--mono);color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:15px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,10px);z-index:120;background:var(--ink);color:#fff;font:500 12px var(--mono);padding:9px 14px;border-radius:6px;opacity:0;transition:opacity .25s var(--ease),transform .25s var(--ease);pointer-events:none}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+.rackph{position:absolute;inset:0;display:grid;place-items:center;text-align:center;color:var(--ink3);font:400 12px/1.6 var(--mono)}
+.rackph b{display:block;color:var(--ink);font:500 15px var(--sans);margin-bottom:4px}
+@media (max-width:1100px){body{overflow:auto;grid-template-rows:var(--top) auto auto auto;height:auto}html{overflow:auto}#split{grid-template-columns:minmax(0,1fr)}#stage{height:56vh}#scroll{overflow:visible}#strip{grid-template-columns:minmax(0,1fr)}#op{border-left:0;border-top:1px solid var(--line)}.iogrid{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-flow:row;grid-template-rows:none}.iogrid .gap{display:none}.dtop .lamps,.crumbs{display:none}}
+@media (prefers-reduced-motion:reduce){#veil{transition:none}}
+</style>
+</head>
+<body>
+<div id="veil"></div>
+<div class="mock">Mock UI · illustrative data — in production every value comes from MongoDB Atlas</div>
+<div class="dtop">
+  <a class="back" href="./room.html" id="back"><span>←</span>Control room</a>
+  <div class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0B0B0C" stroke-width="1.5" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 16V8l5 5 5-5v8"/></svg><span>MongoMation</span></div>
+  <div class="crumbs"><span id="cCab">CAB-01</span><span class="sep">/</span><span>PLC MM-1214</span><span class="sep">/</span><b id="cMach">Sorting station</b></div>
+  <div class="lamps"><span><i class="lamp" id="lampAtlas"></i>Atlas</span><span><i class="lamp" id="lampWorker"></i>Worker</span><span><i class="lamp" id="lampRig"></i>Rig</span></div>
+  <div class="mode" id="mode" title="Mock replays a recorded run · Live drives the real MongoMation worker through the bridge API (:5190)"><button data-m="mock" class="on">Mock</button><button data-m="live">Live</button></div>
+</div>
+<header class="top">
+  <div class="runbar hidden" id="runbar"><div class="in">
+    <div class="spec"><div class="k">Spec</div><div class="q" id="specq"></div></div>
+    <div class="steps" id="steps"></div>
+    <button class="follow on" id="follow"><span class="d"></span><span id="followTxt">Following live</span></button>
+  </div></div>
+</header>
+<div id="split">
+  <section id="stage" aria-label="Live machine">
+    <div id="world"></div>
+    <div id="rack"></div>
+    <div class="hud" id="plc">
+      <div class="k"><span>PLC MM-1214</span><span style="opacity:.4">·</span><span>OpenPLC v4</span></div>
+      <div class="state" id="plcState"><span class="d"></span><span id="plcRun">STOP</span><small id="plcSub">no program</small></div>
+      <dl><dt>Program</dt><dd id="plcProg">—</dd><dt>Scan</dt><dd id="plcScan">—</dd><dt>Modbus</dt><dd id="plcMb">10.42.1.20:502 · unit 1</dd><dt>Tags</dt><dd id="plcTags">24 bound</dd></dl>
+    </div>
+    <div class="hud" id="shots">
+      <button class="auto on" data-s="auto" title="Camera follows the run">Auto</button><span class="sep"></span>
+      <button data-s="overview">Overview</button><button data-s="descend">Descend</button><button data-s="sensors">Sensors</button><button data-s="monitor">Monitor</button><span class="sep"></span>
+      <button data-s="labels" class="on" title="Floating tag labels">Labels</button><button data-s="comp" title="PLC rack component" disabled>PLC rack</button>
+    </div>
+    <div class="hud" id="cap"><span class="n" id="capN">01</span><span><div class="t" id="capT">Sorting by Height (Basic)</div><div class="s" id="capS">Factory I/O scene · 24 tags · idle</div></span></div>
+    <div class="hud" id="alarmHud"><i></i><span id="alarmTxt"></span></div>
+  </section>
+  <section id="work">
+    <div class="wtabs"><nav class="tabs" id="tabs" role="tablist"></nav></div>
+    <div id="scroll"><main id="main"></main></div>
+  </section>
+</div>
+<section id="strip">
+  <div id="io">
+    <div class="sh"><span><b>Live I/O</b> · 13 inputs · 11 outputs</span><span class="src" id="ioSrc"><i></i><span id="ioSrcT">Factory I/O sim · 20 Hz</span></span></div>
+    <div class="iogrid" id="iogrid"></div>
+  </div>
+  <div id="op">
+    <div class="sh" style="margin:0"><span><b>Operator</b></span><div class="lamps3"><span id="lR" class="r"><i></i>run</span><span id="lF" class="f"><i></i>fault</span><span id="lS" class="s on"><i></i>stop</span></div><span class="cnt">COUNT <b id="cnt">0000</b></span></div>
+    <div class="opr">
+      <button class="ob pri" id="oStart">Start</button><button class="ob" id="oStop">Stop</button><button class="ob" id="oReset">Reset</button>
+      <button class="estop" id="oEstop" title="Emergency stop">E-STOP</button>
+    </div>
+    <div class="fi"><select id="faultSel"><option value="left">Left exit eye blocked (At left exit)</option><option value="pallet">Pallet sensor stuck ON</option><option value="high">High sensor stuck ON</option><option value="loaded">Loaded sensor dead</option></select><button class="ob" id="injectBtn">Inject fault</button></div>
+    <div class="ophint" id="opHint">No program on the PLC yet — describe the machine to generate one.</div>
+  </div>
+</section>
+<div class="toast" id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+let SPEED = 1, RUN = 0, PAUSED = false;
+const wait = ms => new Promise(r => setTimeout(r, ms / SPEED));
+async function sleep(ms){ await wait(ms); while (PAUSED) await new Promise(r => setTimeout(r, 120)); }
+
+/* ================= data ================= */
+const EXAMPLES = [
+  {id:'sorting', icon:'<path d="M4 7h10M4 12h7M4 17h4M17 4v16M14 17l3 3 3-3"/>', title:'Height sorting with jam protection', meta:'7 requirements · 2 safety',
+   text:'Automate the sorting station: Start/Stop buttons run the line (Stop always wins, Emergency stop stops everything). Send tall boxes (high sensor) to the right lane and short boxes to the left lane using the chain transfer. If the left exit eye stays blocked for more than 3 seconds, stop the left conveyor and light the Reset light as a fault lamp until Reset is pressed with the eye clear.'},
+  {id:'entry', icon:'<rect x="2" y="13" width="20" height="5" rx="2.5"/><path d="M8 13V7h8v6"/>', title:'Entry conveyor with start/stop & e-stop', meta:'4 requirements · 2 safety',
+   text:'Control the entry conveyor of the sorting station. Pressing Start runs the entry conveyor and turns on the Start light; the conveyor keeps running after Start is released until Stop is pressed, and Stop always wins. The Emergency stop must stop the conveyor immediately.'},
+  {id:'count', icon:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15V9l-1.5 1M11 9h3l-3 6h3M17 9v6"/>', title:'Box counter on the HMI', meta:'3 requirements',
+   text:'Count every box that leaves either exit and show the total on the Counter display. Reset sets the counter to zero, but only while the line is stopped.'},
+  {id:'jam', icon:'<path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/>', title:'Pallet jam alarm', meta:'4 requirements · 1 safety',
+   text:'If the pallet sensor stays active for more than 5 seconds while the entry conveyor runs, stop the conveyor and latch the Stop light as a fault lamp. Reset clears the fault only once the pallet sensor is clear; the conveyor must not restart until Start is pressed again.'},
+];
+const REQS = [
+  ['R1','Start runs the line; it keeps running after Start is released',0,['T1']],
+  ['R2','Stop always wins over Start',1,['T2']],
+  ['R3','Emergency stop stops every conveyor immediately',1,['T3','H1']],
+  ['R4','Tall boxes (High sensor) go to the right lane',0,['T4']],
+  ['R5','Short boxes go to the left lane',0,['T5']],
+  ['R6','Left exit blocked > 3 s stops the left conveyor and lights Reset as a fault lamp',0,['T6','H2']],
+  ['R7','Fault clears only when Reset is pressed with the eye clear',0,['H3']],
+];
+const IO = [
+  ['High sensor','%QX12.4','in',0],['Low sensor','%QX12.5','in',1],['Pallet sensor','%QX12.6','in',0],['Loaded','%QX12.7','in',0],
+  ['At left entry','%QX13.0','in',1,'active-low'],['At left exit','%QX13.1','in',1,'active-low'],['At right entry','%QX13.2','in',1,'active-low'],['At right exit','%QX13.3','in',1,'active-low'],
+  ['Start','%QX13.4','in',0],['Reset','%QX13.5','in',0],['Stop','%QX13.6','in',1,'NC'],['Emergency stop','%QX13.7','in',1,'NC'],['Auto','%QX14.0','in',1],
+  ['Conveyor entry','%QX0.0','out',0],['Load','%QX0.1','out',0],['Unload','%QX0.2','out',0],['Transf. left','%QX0.3','out',0],['Transf. right','%QX0.4','out',0],
+  ['Conveyor left','%QX0.5','out',0],['Conveyor right','%QX0.6','out',0],['Start light','%QX0.7','out',0],['Reset light','%QX1.0','out',0],['Stop light','%QX1.1','out',0],['Counter','%QW0','out','0']];
+const IOBLOCK = ['VAR','  (* harness: located I/O from verified scene map *)',
+  '  HighSensor    AT %QX12.4 : BOOL;','  AtLeftExit    AT %QX13.1 : BOOL;  (* active-low *)','  StartBtn      AT %QX13.4 : BOOL;',
+  '  ResetBtn      AT %QX13.5 : BOOL;','  StopBtn       AT %QX13.6 : BOOL;  (* NC *)','  EStop         AT %QX13.7 : BOOL;  (* NC *)',
+  '  ConveyorEntry AT %QX0.0  : BOOL;','  TransfLeft    AT %QX0.3  : BOOL;','  TransfRight   AT %QX0.4  : BOOL;','  ConveyorLeft  AT %QX0.5  : BOOL;',
+  '  ConveyorRight AT %QX0.6  : BOOL;','  StartLight    AT %QX0.7  : BOOL;','  ResetLight    AT %QX1.0  : BOOL;','END_VAR'];
+const LOGIC = ['VAR','  Running  : BOOL;','  JamTimer : TON;','END_VAR','',
+  '(* R1-R3: seal-in; Stop and E-stop always win *)','Running := (StartBtn OR Running) AND StopBtn AND EStop;','StartLight := Running;','',
+  '(* R4/R5: route by height *)','TransfRight := Running AND HighSensor;','TransfLeft  := Running AND NOT HighSensor;','',
+  '(* R6: left exit blocked (FALSE) for 3 s *)','JamTimer(IN := Running AND NOT AtLeftExit, PT := T#3s);','ResetLight := JamTimer.Q;','',
+  'ConveyorEntry := Running;','ConveyorLeft  := Running AND NOT JamTimer.Q;','ConveyorRight := Running;','END_PROGRAM'];
+const TESTS = [
+  ['T1','Start runs line, Start light on','R1'],['T2','Stop wins over held Start','R2'],['T3','E-stop stops all conveyors','R3'],
+  ['T4','Tall box routed right','R4'],['T5','Short box routed left','R5'],['T6','Left exit jam stops lane, latches Reset light','R6'],
+  ['H1','Hidden regression · e-stop priority','R3',1],['H2','Hidden regression · latched fault','R6',1],['H3','Hidden regression · restart needs Start','R7',1]];
+const STEPS = ['PLC Code','Compile & Deploy','HMI','Test','Verified'];
+const HMI_PARTS = [['Process mimic · conveyors & transfer','process'],['Sensors · 8 bound to %QX12.4–13.3','sensors'],['Actuators · 7 bound to %QX0.0–0.6','actuators'],['Operator panel · Start / Stop / Reset / E-stop','panel'],['Alarm banner & counter','alarms']];
+const LESSONS = [
+  ['Retroreflective eyes are active-low: "blocked" means FALSE. Write the jam condition as NOT AtLeftExit.','run 41d9 · sorting','×4'],
+  ['Stop and Emergency stop are NC contacts — AND them into every run condition; never OR.','run 2a77 · entry conveyor','×6'],
+  ['Use one TON per jam condition; reuse across conditions caused false trips.','run 5be0 · custom','×2'],
+  ['Factory I/O pre-forces the box emitter in built-in scenes — stop and restore it around tests, never blanket-release.','rig · setup','×3'],
+  ['OpenPLC v4 rejects .st uploads; every ZIP must carry conf/modbus_slave.json or Modbus I/O stops.','rig · deploy','×2'],
+  ['MatIEC rejects // comments and keywords like STEP / ON as names — generate the strict subset.','preflight','×5'],
+  ['Every upload restarts the runtime; wait for :502 and the Factory I/O reconnect before testing.','rig · deploy','×3'],
+];
+const VERSIONS = [
+  ['v0','Seed harness: rules, I/O binding, preflight','seed','nt'],
+  ['v1','+ active-low sensor context from scene','kept','go'],
+  ['v1b','Fast model for the critic','rolled back','stop'],
+  ['v2','+ TON timer pattern in context','kept','go'],
+  ['v2c','Skip retest on compile-only edits','rejected','stop'],
+  ['v3','+ latch every fault lamp in its own BOOL','kept · current','me'],
+];
+
+/* ================= state ================= */
+const fresh = () => ({started:false,cur:-1,status:STEPS.map(()=>'pending'),sub:STEPS.map(()=>''),code:[],v1:null,reqs:[],term:[],chainAt:-1,chainDone:0,
+  hmiStep:-1,hmiBuilt:0,tests:{},repair:0,repaired:false,traces:[],events:[],verified:false,selTest:'T6',faults:[],newLesson:false,resumed:0});
+let S = fresh();
+let tab = 'build', follow = true, progSub = 'code', logSub = 'lessons';
+const unlocked = new Set(['build']); const dots = {};
+const TABS = [['build','Build'],['program','Program'],['verify','Verification'],['harness','Harness'],['log','Log']]; /* dashboard: HMI lives in the 3D view + operator strip */
+
+/* ================= shell ================= */
+function renderTabs(){
+  $('#tabs').innerHTML = TABS.map(([k,l]) => { const lock = !unlocked.has(k);
+    return `<button class="tab ${tab===k?'on':''}" role="tab" ${lock?'disabled title="Unlocks as the run reaches it"':''} onclick="setTab('${k}',true)">${l}${lock?'<svg class="lk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}${dots[k]&&tab!==k?`<span class="nd ${dots[k]==='red'?'red':dots[k]==='me'?'me':''}"></span>`:''}</button>`; }).join('');
+}
+function setTab(k, user){
+  if (!unlocked.has(k)) return;
+  if (user && S.started && !S.verified) setFollow(false);
+  tab = k; dots[k] = null; renderTabs(); renderPane(); window.scrollTo({top:0});
+}
+function unlock(k){ if (!unlocked.has(k)){ unlocked.add(k); if (tab !== k) dots[k] = 'new'; renderTabs(); } }
+function live(k){ if (follow && tab !== k){ tab = k; dots[k] = null; renderTabs(); renderPane(); } }
+function touch(k, kind){ if (tab === k) renderPane(); else if (unlocked.has(k)){ if (kind || !dots[k]) dots[k] = kind || 'new'; renderTabs(); } }
+function setFollow(on){ follow = on; $('#follow').classList.toggle('on', on); $('#followTxt').textContent = on ? 'Following live' : 'Follow live'; }
+$('#follow').onclick = () => { setFollow(!follow); if (follow) live(STEP_TAB[S.cur] || 'build'); };
+const STEP_TAB = ['build','build','hmi','verify','build'];
+
+function renderRunbar(){
+  $('#runbar').classList.toggle('hidden', !S.started);
+  if (!S.started) return;
+  $('#steps').innerHTML = STEPS.map((l,i) => { const st = PAUSED && S.status[i]==='active' ? 'paused' : S.status[i];
+    const btn = `<button class="sn ${st}" ${st==='pending'?'disabled':''} onclick="jumpStep(${i})"><span class="c">${st==='done'?'✓':st==='warn'?'!':i+1}</span><span><span class="t">${l}</span><br><span class="s">${S.sub[i]||'&nbsp;'}</span></span></button>`;
+    const conn = i < STEPS.length-1 ? `<span class="conn"><i style="width:${S.status[i]==='done'?100:0}%"></i></span>` : '';
+    return btn + conn; }).join('');
+}
+function jumpStep(i){
+  if (i === 0) { progSub = 'code'; setTab(S.cur===0 ? 'build' : 'program', true); }
+  else if (i === 1) { progSub = 'compile'; setTab(S.cur===1 ? 'build' : 'program', true); }
+  else setTab(['','', 'hmi','verify','build'][i], true);
+}
+function setStep(i, st, sub){ S.status[i] = st; if (sub !== undefined) S.sub[i] = sub; renderRunbar(); }
+
+/* ================= panes ================= */
+function renderPane(){ const m = $('#main'); m.innerHTML = `<div class="pane">${PANES[tab]()}</div>`; AFTER[tab] && AFTER[tab](); }
+const PANES = {}, AFTER = {};
+
+function hl(l){
+  return l.replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/(\(\*.*?\*\))/g,'<span class="cm">$1</span>')
+    .replace(/(%Q[XW][\d.]+)/g,'<span class="ad">$1</span>')
+    .replace(/\b(PROGRAM|END_PROGRAM|VAR|END_VAR|AT|IF|THEN|END_IF|AND|OR|NOT|TRUE|FALSE)\b/g,'<span class="kw">$1</span>')
+    .replace(/\b(BOOL|TON)\b/g,'<span class="ty">$1</span>').replace(/(T#\d+s)/g,'<span class="nu">$1</span>');
+}
+const codeHtml = (lines, caret) => lines.map((l,i) => `<div class="ln ${l.c||''}"><b>${i+1}</b><span>${hl(l.t)}${caret && i===lines.length-1?'<span class="caret"></span>':''}</span></div>`).join('');
+function paintCode(caret){
+  for (const id of ['#code','#pcode']){ const el = $(id); if (!el) continue; el.innerHTML = codeHtml(S.code, caret); el.scrollTop = el.scrollHeight; }
+  const lc = $('#lineCount'); if (lc) lc.textContent = S.code.length ? `${S.code.length} lines` : '';
+}
+const editor = (id, title) => `<div class="editor"><div class="etabs"><span class="f">main.st</span><span>${title}</span><span class="r" id="lineCount">${S.code.length?S.code.length+' lines':''}</span></div><div class="code" id="${id}"></div></div>
+  <div class="note"><span class="sq"></span>Highlighted lines are written by the harness from the verified I/O map — the model only writes logic, so it can't invent addresses.</div>`;
+const chainHtml = () => `<div class="chain">${[['Preflight','MatIEC'],['Compile','STruC++'],['Deploy','OpenPLC v4'],['Simulator','Factory I/O']].map(([k,v],i) =>
+  `<div class="cn ${i<S.chainDone?'on':i===S.chainAt?'busy':''}"><div class="k">${k}</div><div class="v">${i<S.chainDone?'✓ ':i===S.chainAt?'… ':''}${v}</div></div>`).join('')}</div>`;
+const termHtml = () => `<div class="term" id="term">${S.term.map(([c,t]) => `<div class="${c}">${t}</div>`).join('') || '<div class="dim">waiting for program…</div>'}</div>`;
+const statusPill = st => st==='done'?'<span class="pill go"><i></i>done</span>':st==='warn'?'<span class="pill ca"><i></i>repairing</span>':PAUSED?'<span class="pill stop"><i></i>worker down</span>':'<span class="pill fl"><i></i>running</span>';
+
+/* ---------- BUILD ---------- */
+PANES.build = () => {
+  if (!S.started) return `<section class="hero">
+    <div class="kicker">Autonomous PLC engineer</div>
+    <h1>Describe the machine.<br><em>We engineer the control system.</em></h1>
+    <p class="lede">Write what the machine should do. MongoMation writes the PLC program, builds the operator HMI, and proves both on a live Factory I/O simulation.</p>
+    <div class="composer"><textarea id="prompt" placeholder="e.g. When Start is pressed, run the conveyor until the box reaches the end sensor. Stop always wins…"></textarea>
+      <div class="cbar"><span class="mono" style="font-size:12px;color:var(--ink3)">Scene</span><select><option>Sorting by Height (Basic)</option></select><span class="pill go">verified</span>
+      <button class="btn pri gen" id="gen" disabled>Generate →</button></div></div>
+    <p class="lbl" style="margin-top:34px">Or start from an example</p>
+    <div class="examples">${EXAMPLES.map(e => `<button class="ex" data-ex="${e.id}"><div class="t"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${e.icon}</svg>${e.title}</div><p>${e.text.slice(0,118)}…</p><div class="m">${e.meta} · sorting-by-height-basic</div></button>`).join('')}</div>
+  </section>`;
+  const c = S.cur;
+  if (c === 0) return `<div class="card"><div class="ch"><h2>1 · PLC code generation</h2><span class="sub">spec → requirements → I/O binding → Structured Text</span><span class="r">${statusPill(S.status[0])}</span></div>
+    <div class="cb g-left"><div><p class="lbl">Requirements extracted</p><div class="reqs">${S.reqs.map(([id,t,s]) => `<div class="req"><b>${id}</b><span>${t}${s?'<span class="sf">safety</span>':''}</span></div>`).join('') || '<div class="empty" style="padding:24px">Reading the spec…</div>'}</div></div>
+    <div><p class="lbl">Program</p>${editor('code','IEC 61131-3 Structured Text')}</div></div></div>`;
+  if (c === 1) return `<div class="card"><div class="ch"><h2>2 · Compile & deploy</h2><span class="sub">local preflight, then the real OpenPLC toolchain</span><span class="r">${statusPill(S.status[1])}</span></div>
+    <div class="cb">${chainHtml()}<p class="lbl">Build log</p>${termHtml()}</div></div>`;
+  if (c === 2) return `<div class="card"><div class="ch"><h2>3 · Building the operator HMI</h2><span class="r">${statusPill(S.status[2])}</span></div>
+    <div class="cb" style="max-width:560px">${checklistHtml()}<p class="hint">The HMI binds to the live machine on the left — tags light up as they're bound; the operator panel is below.</p></div></div>`;
+  if (c === 3) return `<div class="card"><div class="ch"><h2>4 · Testing on simulation</h2><span class="r">${statusPill(S.status[3])}</span></div>
+    <div class="cb" style="max-width:720px">${testsHtml(false)}<p class="hint">Full results and measured timelines in <a href="#" onclick="setTab('verify',true);return false">Verification →</a></p></div></div>`;
+  return `<div class="card"><div class="cb" style="padding:28px">
+    <div class="done-hero"><div class="seal"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg></div>
+      <div><h2>7 / 7 requirements verified</h2><p>Program v2 is running on OpenPLC; the HMI is live and bound to the PLC tags.</p></div></div>
+    <div class="metrics" style="margin-bottom:24px"><div class="metric"><div class="k">Tests</div><div class="v t-go">9 / 9</div><div class="s">6 public · 3 hidden</div></div>
+      <div class="metric"><div class="k">Self-repairs</div><div class="v">1</div><div class="s">T6 · fault lamp latch</div></div>
+      <div class="metric"><div class="k">Time</div><div class="v">4m 12s</div><div class="s">spec → verified</div></div>
+      <div class="metric"><div class="k">Model cost</div><div class="v">$0.38</div><div class="s">harness v3</div></div></div>
+    <p class="lbl">What next</p>
+    <div class="next"><button class="btn pri" onclick="openExport()">${ICON_EXPORT} Export to PLC</button><button class="btn" onclick="setTab('hmi',true)">Operate the HMI</button><button class="btn hz" onclick="setTab('hmi',true)">Inject a fault</button>
+      <button class="btn" onclick="setTab('harness',true)">What the harness learned</button><button class="btn" onclick="newSpec()">New spec</button></div></div></div>`;
+};
+AFTER.build = () => {
+  if (!S.started){
+    const p = $('#prompt'), g = $('#gen');
+    p.oninput = () => g.disabled = p.value.trim().length < 20;
+    g.onclick = () => runAdapter(p.value.trim());
+    document.querySelectorAll('[data-ex]').forEach(b => b.onclick = async () => {
+      const ex = EXAMPLES.find(e => e.id === b.dataset.ex), my = ++RUN; p.value = ''; g.disabled = true; p.focus();
+      for (let i = 0; i <= ex.text.length; i += 6){ if (my !== RUN) return; p.value = ex.text.slice(0,i); await new Promise(r=>setTimeout(r,8)); }
+      p.value = ex.text; g.disabled = false; g.classList.remove('nudge'); void g.offsetWidth; g.classList.add('nudge'); });
+  }
+  paintCode(); const t = $('#term'); if (t) t.scrollTop = t.scrollHeight;
+};
+
+/* ---------- HMI ---------- */
+function checklistHtml(){ return `<div class="checklist">${HMI_PARTS.map(([t],i) => `<div class="ci ${i<S.hmiBuilt?'done':i===S.hmiStep?'doing':''}"><span class="b"></span>${t}</div>`).join('')}</div>`; }
+PANES.hmi = () => {
+  if (S.hmiStep < 0) return `<div class="empty"><b>HMI not generated yet</b>It's built from the I/O map once the program is deployed.</div>`;
+  const built = S.hmiBuilt >= HMI_PARTS.length;
+  return `<div class="g-side">
+    <div class="card"><div class="ch"><h2>Operator HMI</h2><span class="sub">generated from the I/O map · bound to live PLC tags</span><span class="r">${built?'<span class="pill go"><i></i>live</span>':'<span class="pill fl"><i></i>building</span>'}</span></div>
+      <div class="cb">${hmiSvg()}<p class="hint" id="hmiHint">${built ? hmi.hint : 'Building screen…'}</p></div></div>
+    <div class="stack">
+      ${built ? '' : `<div class="card"><div class="ch"><h3>Building</h3></div><div class="cb">${checklistHtml()}</div></div>`}
+      <div class="card"><div class="ch"><h3>Live simulator</h3><span class="r"><span class="pill go"><i></i>connected</span></span></div><div class="cb">
+        <div class="dcv">${dcvSvg()}<span class="tag pill nt" style="background:#fff">Factory I/O · Amazon DCV</span><span class="ip">10.42.1.10:8443</span></div>
+        <div class="kv" style="margin-top:10px"><span>OpenPLC</span><span class="mono">RUNNING · ${S.repaired?'v2':'v1'}</span></div><div class="kv"><span>Modbus</span><span class="mono">10.42.1.20:502 · unit 1</span></div></div></div>
+      <div class="card"><div class="ch"><h3>Fault injection</h3></div><div class="cb">
+        <select class="f" id="faultSel"><option value="left">Left exit eye blocked (At left exit)</option><option value="pallet">Pallet sensor stuck ON</option><option value="high">High sensor stuck ON</option><option value="loaded">Loaded sensor dead</option></select>
+        <button class="btn hz" style="width:100%;margin-top:10px" id="injectBtn" ${built && S.verified && !hmi.forced ? '' : 'disabled'}>Inject fault</button>
+        <p class="hint" style="margin-top:8px">${S.verified ? 'Forces a sensor through the Factory I/O Web API, then watches the program react.' : 'Available once the program is verified.'}</p>
+        ${hmi.forced ? `<div class="forced" style="margin-top:10px"><span style="padding-left:6px">At left exit = FALSE</span><span class="pill ca">forced · read-back ✓</span></div>` : ''}
+        ${S.faults.map(f => `<div class="kv"><span>${f[0]}</span><span class="pill ${f[1]==='handled'?'go':'ca'}">${f[1]}</span></div>`).join('')}
+      </div></div>
+    </div></div>`;
+};
+AFTER.hmi = () => {
+  if (S.hmiStep < 0) return;
+  for (let j = 0; j < S.hmiBuilt; j++) document.querySelectorAll(`.bld[data-g="${j}"]`).forEach(n => n.classList.add('in'));
+  if (S.hmiBuilt >= HMI_PARTS.length) bindHmi();
+  const ib = $('#injectBtn'); if (ib) ib.onclick = injectFault;
+};
+function hmiSvg(){
+  return `<div class="hmi"><div class="hmi-bar"><span>SORTING STATION</span><span style="color:var(--ink4)">screen 1/1</span><span class="alarm bld" data-g="4" id="alarm">No active alarms</span></div>
+  <svg viewBox="0 0 720 380" aria-label="Operator HMI">
+    <g class="bld" data-g="0">
+      <text x="30" y="166" fill="#67717b" font-family="Geist Mono" font-size="11">ENTRY</text>
+      <rect x="30" y="180" width="340" height="30" rx="15" fill="#d4d2cc" stroke="#8d949b" stroke-width="1.5"/>
+      <line id="beltE" class="belt" x1="45" y1="195" x2="355" y2="195" stroke="#a9aeb3" stroke-width="14"/>
+      <rect x="370" y="160" width="70" height="70" rx="6" fill="#d4d2cc" stroke="#8d949b" stroke-width="1.5"/>
+      <text x="405" y="250" fill="#67717b" font-family="Geist Mono" font-size="10" text-anchor="middle">TRANSFER</text>
+      <rect x="390" y="30" width="30" height="130" rx="15" fill="#d4d2cc" stroke="#8d949b" stroke-width="1.5"/>
+      <line id="beltL" class="belt" x1="405" y1="148" x2="405" y2="42" stroke="#a9aeb3" stroke-width="14"/>
+      <text x="430" y="40" fill="#67717b" font-family="Geist Mono" font-size="10">LEFT · short</text>
+      <rect x="390" y="230" width="30" height="130" rx="15" fill="#d4d2cc" stroke="#8d949b" stroke-width="1.5"/>
+      <line id="beltR" class="belt" x1="405" y1="242" x2="405" y2="348" stroke="#a9aeb3" stroke-width="14"/>
+      <text x="430" y="358" fill="#67717b" font-family="Geist Mono" font-size="10">RIGHT · tall</text>
+      <rect id="box" x="40" y="168" width="22" height="22" rx="2" fill="#b98546" stroke="#7a5326" opacity="0"/>
+    </g>
+    <g class="bld" data-g="1" font-family="Geist Mono" font-size="9.5" fill="#46505a">
+      <circle id="sHigh" cx="330" cy="160" r="6" fill="#c4c8cc" stroke="#46505a"/><text x="296" y="150">HIGH</text>
+      <circle id="sLow" cx="300" cy="230" r="6" fill="#c4c8cc" stroke="#46505a"/><text x="286" y="250">LOW</text>
+      <circle id="sLExit" cx="440" cy="70" r="6" fill="#c4c8cc" stroke="#46505a"/><text x="452" y="73">L-EXIT</text>
+      <circle id="sRExit" cx="440" cy="320" r="6" fill="#c4c8cc" stroke="#46505a"/><text x="452" y="323">R-EXIT</text>
+    </g>
+    <g class="bld" data-g="2" font-family="Geist Mono" font-size="9.5">
+      <rect id="aE" x="160" y="222" width="76" height="18" rx="3" fill="#f2f1ed" stroke="#a9aeb3"/><text id="aEt" x="198" y="234" fill="#67717b" text-anchor="middle">ENTRY OFF</text>
+      <rect id="aL" x="296" y="80" width="80" height="18" rx="3" fill="#f2f1ed" stroke="#a9aeb3"/><text id="aLt" x="336" y="92" fill="#67717b" text-anchor="middle">LEFT OFF</text>
+      <rect id="aR" x="296" y="290" width="80" height="18" rx="3" fill="#f2f1ed" stroke="#a9aeb3"/><text id="aRt" x="336" y="302" fill="#67717b" text-anchor="middle">RIGHT OFF</text>
+    </g>
+    <g class="bld" data-g="3">
+      <rect x="520" y="30" width="172" height="250" rx="8" fill="#f2f1ed" stroke="#a9aeb3"/>
+      <text x="535" y="52" fill="#46505a" font-family="Geist" font-weight="600" font-size="11" letter-spacing="2">OPERATOR</text>
+      <g class="hbtn" id="bStart"><rect x="535" y="66" width="68" height="36" rx="5" fill="#0B0B0C"/><text x="569" y="89" fill="#fff" font-family="Geist" font-weight="700" font-size="12" text-anchor="middle">START</text></g>
+      <g class="hbtn" id="bStop"><rect x="611" y="66" width="68" height="36" rx="5" fill="#c0322b"/><text x="645" y="89" fill="#fff" font-family="Geist" font-weight="700" font-size="12" text-anchor="middle">STOP</text></g>
+      <g class="hbtn" id="bReset"><rect x="535" y="112" width="68" height="36" rx="5" fill="#f2b01e"/><text x="569" y="135" fill="#1b2127" font-family="Geist" font-weight="700" font-size="12" text-anchor="middle">RESET</text></g>
+      <g class="hbtn" id="bEstop"><circle cx="645" cy="130" r="22" fill="#c0322b" stroke="#f2b01e" stroke-width="4"/><text x="645" y="134" fill="#fff" font-family="Geist" font-weight="700" font-size="9" text-anchor="middle">E-STOP</text></g>
+      <g font-family="Geist Mono" font-size="9.5" fill="#46505a">
+        <circle id="lStart" cx="548" cy="176" r="7" fill="#c4c8cc"/><text x="561" y="179">RUNNING</text>
+        <circle id="lReset" cx="548" cy="198" r="7" fill="#c4c8cc"/><text x="561" y="201">FAULT / RESET</text>
+        <circle id="lStop" cx="548" cy="220" r="7" fill="#c4c8cc"/><text x="561" y="223">STOPPED</text>
+      </g>
+    </g>
+    <g class="bld" data-g="4">
+      <rect x="535" y="238" width="142" height="30" rx="4" fill="#fff" stroke="#a9aeb3"/>
+      <text x="545" y="257" fill="#67717b" font-family="Geist Mono" font-size="9">COUNT</text>
+      <text id="cnt" x="667" y="259" fill="#1b2127" font-family="Geist Mono" font-size="17" text-anchor="end">${String(hmi.count).padStart(4,'0')}</text>
+    </g>
+  </svg></div>`;
+}
+function dcvSvg(){
+  return `<svg viewBox="0 0 320 200" width="100%" height="100%"><rect width="320" height="200" fill="url(#sky)"/><defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d6dde3"/><stop offset="1" stop-color="#9aa6b1"/></linearGradient></defs>
+    <path d="M0 150 L320 120 L320 200 L0 200z" fill="#7d8790"/><path d="M20 140 L200 118 L215 128 L35 150z" fill="#3f4a53"/><path d="M200 118 L245 112 L262 122 L215 128z" fill="#a0702a"/>
+    <path d="M222 70 L236 68 L250 116 L238 118z" fill="#3f4a53"/><path d="M240 124 L256 122 L280 175 L262 178z" fill="#3f4a53"/><rect x="${70 + (hmi.count*37)%110}" y="124" width="12" height="10" fill="#b98546"/></svg>`;
+}
+let hmi = {running:false, fault:false, count:0, box:null, raf:0, jamT:0, forced:false, hint:'Live — buttons write to the PLC through Factory I/O. Press <b>START</b>.'};
+function bindHmi(){
+  const on = (id, fn) => { const n = document.getElementById(id); if (n) n.onclick = fn; };
+  on('bStart', () => { if (!hmi.fault){ hmi.running = true; paintHmi(); } });
+  on('bStop', () => { hmi.running = false; paintHmi(); });
+  on('bEstop', () => { hmi.running = false; paintHmi(); });
+  on('bReset', () => { if (!hmi.forced && hmi.fault){ hmi.fault = false; hmi.hint = 'Fault cleared. Press <b>START</b> to restart — the line does not restart by itself (R7).'; const h=$('#hmiHint'); if(h) h.innerHTML = hmi.hint; paintHmi(); } });
+  paintHmi();
+  if (!hmi.raf){ let last = performance.now(); const loop = now => { tickHmi((now-last)/1000); last = now; hmi.raf = requestAnimationFrame(loop); }; hmi.raf = requestAnimationFrame(loop); }
+}
+function tickHmi(dt){
+  const box = document.getElementById('box');
+  if (hmi.forced && hmi.running && !hmi.fault){ hmi.jamT += dt; if (hmi.jamT > 3){ hmi.fault = true; logEv('Left lane stopped after 3.0 s · Reset light latched (R6 holds under fault)'); paintHmi(); } }
+  if (!box || !hmi.running || hmi.fault) return;
+  if (!hmi.box) hmi.box = {x:40, y:168, tall:Math.random() > .5, ph:0};
+  const b = hmi.box, v = 120 * dt;
+  if (b.ph === 0){ b.x += v; if (b.x >= 394){ b.x = 394; b.ph = 1; } }
+  else { b.y += b.tall ? v : -v; if (b.y > 340 || b.y < 30){ hmi.box = null; hmi.count++; const c = document.getElementById('cnt'); if (c) c.textContent = String(hmi.count).padStart(4,'0'); IO[23][3] = String(hmi.count); return; } }
+  box.setAttribute('x', b.x); box.setAttribute('y', b.y); box.setAttribute('height', b.tall ? 30 : 18); box.setAttribute('opacity', 1);
+  document.getElementById('sHigh').setAttribute('fill', b.ph===0 && b.x>300 && b.x<350 && b.tall ? '#FF5A1F' : '#c4c8cc');
+  document.getElementById('sLow').setAttribute('fill', b.ph===0 && b.x>270 && b.x<320 ? '#FF5A1F' : '#c4c8cc');
+}
+function paintHmi(){
+  const r = hmi.running, f = hmi.fault, run = r && !f, g = id => document.getElementById(id);
+  IO.forEach(t => { if (['Conveyor entry','Conveyor left','Conveyor right'].includes(t[0])) t[3] = run?1:0; if (t[0]==='Start light') t[3] = r?1:0; if (t[0]==='Reset light') t[3] = f?1:0; if (t[0]==='At left exit') t[3] = hmi.forced?0:1; });
+  if (!g('beltE')) return;
+  ['beltE','beltL','beltR'].forEach(id => { g(id).classList.toggle('run', run); g(id).setAttribute('stroke', run ? '#0B0B0C' : '#a9aeb3'); });
+  if (f) g('beltL').setAttribute('stroke', '#c0322b');
+  const act = (id, on, txt) => { g(id).setAttribute('stroke', on ? '#FF5A1F' : '#a9aeb3'); g(id).setAttribute('fill', on ? '#FFF1EB' : '#f2f1ed'); g(id+'t').setAttribute('fill', on ? '#FF5A1F' : '#67717b'); g(id+'t').textContent = `${txt} ${on?'ON':'OFF'}`; };
+  act('aE', run, 'ENTRY'); act('aL', run, 'LEFT'); act('aR', run, 'RIGHT');
+  g('lStart').setAttribute('fill', r ? '#FF5A1F' : '#c4c8cc'); g('lReset').setAttribute('fill', f ? '#f2b01e' : '#c4c8cc'); g('lStop').setAttribute('fill', !r ? '#c0322b' : '#c4c8cc');
+  g('sLExit').setAttribute('fill', hmi.forced ? '#f2b01e' : '#c4c8cc'); g('sRExit').setAttribute('fill', '#c4c8cc');
+  const al = g('alarm'); al.className = 'alarm bld in' + (f ? ' on' : hmi.forced ? ' forced' : '');
+  al.textContent = f ? 'ALARM · Left exit jam > 3 s' : hmi.forced ? 'Left exit eye forced blocked' : 'No active alarms';
+  if (tab === 'program' && progSub === 'io') renderPane();
+}
+function injectFault(){
+  const sel = $('#faultSel').value;
+  if (sel !== 'left'){ S.faults.push([$('#faultSel').selectedOptions[0].text, 'handled']); logEv(`Fault injected: ${$('#faultSel').selectedOptions[0].text} · program reacted as specified`); renderPane(); return; }
+  hmi.forced = true; hmi.running = true; hmi.jamT = 0; hmi.fault = false;
+  hmi.hint = '<b style="color:var(--ca)">FORCED</b> — the left exit eye reads blocked. Watch the left lane stop after 3 s and the fault lamp latch.';
+  S.faults.push(['Left exit eye blocked','active']);
+  logEv('Fault injected via Factory I/O Web API: At left exit forced FALSE (read-back ✓)', 'err'); trace('fault · force At left exit','factoryio',300);
+  renderPane();
+  setTimeout(() => { hmi.forced = false; S.faults[S.faults.length-1][1] = 'handled'; hmi.hint = 'Fault released. Press <b>RESET</b>, then <b>START</b>.';
+    logEv('Fault released · harness: handled by v2, nothing new to learn', 'meta'); touch('hmi'); touch('log'); if (tab==='hmi') paintHmi(); }, 7000 / SPEED);
+}
+
+/* ---------- PROGRAM ---------- */
+PANES.program = () => {
+  const subs = [['code','Code'],['io','I/O map'],['versions','Versions'],['compile','Compile']];
+  let body = '';
+  if (progSub === 'code') body = editor('pcode','IEC 61131-3 Structured Text · ' + (S.repaired ? 'v2 (repair)' : 'v1'));
+  if (progSub === 'io') body = `<div class="card"><table><thead><tr><th></th><th>Tag</th><th>PLC address</th><th>Modbus</th><th>Direction</th><th>Note</th></tr></thead><tbody>${
+    IO.map(([n,a,d,v,note],i) => `<tr><td>${typeof v==='string'?`<span class="mono t-fl">${v}</span>`:`<span class="led ${v?'on':''}"></span>`}</td><td>${n}${hmi.forced&&n==='At left exit'?' <span class="pill ca">forced</span>':''}</td><td class="m">${a}</td><td class="m">${d==='in'?'coil '+(100+i):a==='%QW0'?'HR 0':'coil '+(i-13)}</td><td class="m">${d==='in'?'sensor → PLC':'PLC → actuator'}</td><td class="m">${note||''}</td></tr>`).join('')}</tbody></table></div>
+    <p class="hint">Verified live against the rig (infrastructure/config/io_mapping.json). Values update while the HMI runs.</p>`;
+  if (progSub === 'versions') body = `<div class="stack">
+    ${S.repaired ? `<div class="card"><div class="ch"><h3>v2 · repair</h3><span class="pill go"><i></i>deployed · verified</span><span class="r sub">after T6 failed</span></div><div class="cb">
+      <p style="margin:0 0 12px;font-size:13.5px;color:var(--ink2)">T6 measured the Reset light dropping at t = 3.10 s. Diagnosis: the fault lamp followed the timer instead of latching. Fix: latch <span class="mono">FaultLeft</span> and clear it only on Reset with the eye clear.</p>
+      <div class="diff"><div class="c">  JamTimer(IN := Running AND NOT AtLeftExit, PT := T#3s);</div><div class="m">- ResetLight := JamTimer.Q;</div><div class="p">+ IF JamTimer.Q THEN FaultLeft := TRUE; END_IF;</div><div class="p">+ IF ResetBtn AND AtLeftExit THEN FaultLeft := FALSE; END_IF;</div><div class="p">+ ResetLight := FaultLeft;</div><div class="m">- ConveyorLeft  := Running AND NOT JamTimer.Q;</div><div class="p">+ ConveyorLeft  := Running AND NOT FaultLeft;</div></div></div></div>` : ''}
+    ${S.code.length ? `<div class="card"><div class="ch"><h3>v1 · codegen</h3><span class="pill ${S.repaired?'nt':'fl'}">${S.repaired?'superseded':'current'}</span><span class="r sub">${S.v1||S.code.length} lines · compiled first try</span></div><div class="cb"><p style="margin:0;font-size:13.5px;color:var(--ink2)">Generated from 7 requirements with harness v3. The harness wrote all 13 located variables.</p></div></div>` : '<div class="empty"><b>No versions yet</b></div>'}</div>`;
+  if (progSub === 'compile') body = `${chainHtml()}${termHtml()}`;
+  return `<div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap"><div class="seg">${subs.map(([k,l]) => `<button class="${progSub===k?'on':''}" onclick="progSub='${k}';renderPane()">${l}</button>`).join('')}</div>
+    <span class="mono" style="font-size:12px;color:var(--ink3)">sorting-by-height-basic · OpenPLC v4 · harness v3</span>
+    <button class="btn ${S.verified?'pri':''} sm" style="margin-left:auto" onclick="openExport()" ${S.verified?'':'disabled title="Available once every requirement is verified"'}>${ICON_EXPORT} Export to PLC</button></div>${body}`;
+};
+AFTER.program = () => { paintCode(); const t = $('#term'); if (t) t.scrollTop = t.scrollHeight; };
+
+/* ---------- VERIFICATION ---------- */
+function reqStatus(r){
+  const ts = r[3].map(t => S.tests[t]);
+  if (ts.some(s => s === 'fail')) return 'failed';
+  if (ts.every(s => s === 'pass')) return 'verified';
+  if (ts.some(s => s === 'run')) return 'testing';
+  return 'untested';
+}
+const reqPill = s => s==='verified'?'<span class="pill go"><i></i>verified</span>':s==='failed'?'<span class="pill stop"><i></i>failed</span>':s==='testing'?'<span class="pill fl"><i></i>testing</span>':'<span class="pill nt">untested</span>';
+function testsHtml(click){
+  const done = Object.values(S.tests).filter(v => v==='pass'||v==='fail').length;
+  return `<div class="progress"><i style="width:${done/TESTS.length*100}%"></i></div><div class="tests">${TESTS.map(([id,t,r,h]) => { const s = S.tests[id] || '';
+    const c = click && !h && s && s!=='run';
+    return `<div class="test ${s} ${c?'click':''} ${click&&S.selTest===id?'sel':''}" ${c?`onclick="S.selTest='${id}';renderPane()"`:''}><span class="i">${s==='pass'?'✓':s==='fail'?'✕':''}</span>
+      <span>${h?`🔒 ${t}`:`<span class="id">${id}</span>${t}`}</span><span class="rq">${r}</span></div>`; }).join('')}</div>${repairHtml()}`;
+}
+function repairHtml(){
+  if (!S.repair) return '';
+  const steps = ['Diagnosing from measured samples…','Writing repair v2…','Recompiled & redeployed · retesting T6 + regression'];
+  return `<div class="repair" style="margin-top:14px"><h3>Self-repair · ${S.repaired ? 'fixed in v2' : steps[S.repair-1]}</h3>
+    <p>T6 measured the <span class="mono">Reset light</span> going FALSE at t = 3.10 s — the fault lamp followed the timer instead of latching.</p>
+    ${S.repair >= 2 ? `<div class="diff"><div class="m">- ResetLight := JamTimer.Q;</div><div class="p">+ IF JamTimer.Q THEN FaultLeft := TRUE; END_IF;</div><div class="p">+ IF ResetBtn AND AtLeftExit THEN FaultLeft := FALSE; END_IF;</div><div class="p">+ ResetLight := FaultLeft;</div></div>` : ''}</div>`;
+}
+PANES.verify = () => {
+  if (!Object.keys(S.tests).length) return `<div class="empty"><b>No tests yet</b>Tests run on the live simulator after the HMI is built.</div>`;
+  const vals = Object.values(S.tests), pass = vals.filter(v=>v==='pass').length, fail = vals.filter(v=>v==='fail').length;
+  const ver = REQS.filter(r => reqStatus(r)==='verified').length;
+  const sel = TESTS.find(t => t[0]===S.selTest);
+  return `<div class="metrics" style="margin-bottom:18px">
+      <div class="metric"><div class="k">Passed</div><div class="v t-go">${pass}</div><div class="s">of 9 tests</div></div>
+      <div class="metric"><div class="k">Failed</div><div class="v ${fail?'t-stop':''}">${fail}</div><div class="s">${S.repaired?'1 fixed by self-repair':'—'}</div></div>
+      <div class="metric"><div class="k">Hidden tests</div><div class="v">3</div><div class="s">never shown to the model</div></div>
+      <div class="metric"><div class="k">Requirements</div><div class="v ${ver===7?'t-go':''}">${ver} / 7</div><div class="s">verified with evidence</div></div></div>
+    <div class="grid2">
+      <div class="card"><div class="ch"><h3>Requirements</h3><span class="r sub">verified only with measured evidence</span></div>
+        <table><thead><tr><th>Id</th><th>Requirement</th><th>Tests</th><th style="text-align:right">Status</th></tr></thead><tbody>${REQS.map(r => `<tr><td class="m">${r[0]}${r[2]?'<br><span class="sf" style="margin:4px 0 0">safety</span>':''}</td><td>${r[1]}</td><td class="m">${r[3].join(' ')}</td><td style="text-align:right">${reqPill(reqStatus(r))}</td></tr>`).join('')}</tbody></table></div>
+      <div class="stack">
+        <div class="card"><div class="ch"><h3>Tests</h3><span class="r sub">click a public test for its timeline</span></div><div class="cb">${testsHtml(true)}</div></div>
+        <div class="card"><div class="ch"><h3>Measured timeline · ${sel[0]}</h3><span class="r sub">${sel[1]}</span></div><div class="cb">${timelineHtml(sel[0])}</div></div>
+      </div></div>`;
+};
+function timelineHtml(id){
+  const s = S.tests[id];
+  if (!s || s === 'run') return '<div class="empty" style="padding:24px">Measuring…</div>';
+  const W=520,H=150,L=56,R=10,T=14,B=22, x=t=>L+(t/6)*(W-L-R), lane=i=>T+i*40, hi=i=>lane(i)+4, lo=i=>lane(i)+26;
+  const step=(pts,i)=>{let d=`M${x(0)},${pts[0][1]?hi(i):lo(i)}`;for(let k=1;k<pts.length;k++)d+=` H${x(pts[k][0])} V${pts[k][1]?hi(i):lo(i)}`;return d+` H${x(6)}`;};
+  let lanes, note, ok = s === 'pass';
+  if (id === 'T6') lanes = [['L-exit eye',[[0,1],[1,0],[4.8,1]],'var(--sensor)'],['Conv. left',[[0,1],[4.05,0]],'var(--actuator)'],['Reset light', ok ? [[0,0],[4.05,1]] : [[0,0],[4.05,1],[4.15,0]],'#c08a00']];
+  else lanes = [['Input',[[0,0],[1,1],[1.4,0]],'var(--sensor)'],['Output',[[0,0],[1.05,1]],'var(--actuator)']];
+  let g = '';
+  for (let t=0;t<=6;t++) g += `<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${H-B}" stroke="#ebe8e2"/><text x="${x(t)}" y="${H-6}" fill="#9aa1a8" font-size="10" font-family="Geist Mono" text-anchor="middle">${t}s</text>`;
+  lanes.forEach(([n],i) => g += `<text x="${L-8}" y="${lane(i)+19}" fill="#67717b" font-size="10" font-family="Geist Mono" text-anchor="end">${n}</text>`);
+  if (id === 'T6') g += `<rect x="${x(1)}" y="${T}" width="${x(4.05)-x(1)}" height="${H-B-T}" fill="#f2b01e" opacity=".1"/><text x="${(x(1)+x(4.05))/2}" y="${T-3}" fill="#9a5c00" font-size="9" font-family="Geist Mono" text-anchor="middle">eye blocked · 3.05 s</text>`;
+  lanes.forEach(([n,p,c],i) => g += `<path d="${step(p,i)}" fill="none" stroke="${c}" stroke-width="2.2"/>`);
+  if (id === 'T6' && !ok) g += `<circle cx="${x(4.15)}" cy="${lo(2)}" r="5" fill="none" stroke="#c0322b" stroke-width="1.8"/>`;
+  note = id === 'T6' ? (ok ? 'Reset light stays TRUE while the fault is latched · measured on v2' : 'Reset light dropped at t = 3.10 s · expected latched (v1)') : 'Output followed input within 50 ms';
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%">${g}</svg><div class="note" style="color:${ok?'var(--go)':'var(--stop)'}">${ok?'✓':'✕'} ${note}</div>`;
+}
+
+/* ---------- HARNESS ---------- */
+PANES.harness = () => `<div class="stack">
+  <div class="card"><div class="ch"><h2>Harness versions</h2><span class="r sub">each change must beat a frozen benchmark without weakening safety</span></div>
+    <div class="cb"><div class="vtrack">${VERSIONS.map(([v,d,st,c],i) => `${i?'<span class="varrow">→</span>':''}<div class="vnode ${c==='me'?'cur':c==='stop'?'dead':''}"><div class="v ${c==='me'?'t-me':''}">${v}</div><div class="d">${d}</div><span class="pill ${c}">${st}</span></div>`).join('')}</div></div></div>
+  <div class="grid2">
+    <div class="card"><div class="ch"><h3>Latest change · v3</h3><span class="r"><span class="pill go"><i></i>kept</span></span></div><div class="cb">
+      <p class="lbl">Failure pattern (seen 3× on 2 training cases)</p>
+      <p style="margin:0 0 14px;font-size:13.5px;line-height:1.55;color:var(--ink2)">Fault lamps were driven straight from a timer output and dropped one scan later, so latched-fault tests failed.</p>
+      <p class="lbl">Config change</p>
+      <div class="diff" style="margin-bottom:16px"><div class="c">  rules:</div><div class="c">    - "Every located input is read-only."</div><div class="p">+   - "Latch every fault lamp in its own BOOL; clear it only in the Reset branch."</div></div>
+      <p class="lbl">Benchmark gate · v2 → v3 · 4 frozen training cases</p>
+      <table><tbody><tr><td>Requirement satisfaction</td><td class="m">75% → 86%</td><td class="m t-go">+11</td></tr><tr><td>Safety requirements</td><td class="m">100% → 100%</td><td class="m">±0</td></tr>
+        <tr><td>Repairs per case</td><td class="m">1.50 → 0.75</td><td class="m t-go">−0.75</td></tr><tr><td>Cost per case</td><td class="m">$0.41 → $0.33</td><td class="m t-go">−$0.08</td></tr></tbody></table>
+      <p class="hint">Guardrails passed: hidden tests untouched · preflight still on · rules append-only.</p></div></div>
+    <div class="card"><div class="ch"><h3>Does the harness help?</h3><span class="r sub">held-out cases · same model · same grader</span></div><div class="cb">
+      <div class="bars">${[['Bare model, one shot',41,'#D9D9DC'],['Harness v0',64,'#6B7079'],['Harness v3 (evolved)',86,'var(--me)']].map(([n,p,c]) => `<div class="brow"><div class="top"><span>${n}</span><b>${p}%</b></div><div class="btrack"><i style="width:${p}%;background:${c}"></i></div></div>`).join('')}</div>
+      <p class="lbl" style="margin-top:22px">Also measured</p>
+      <table><tbody><tr><td>Compiles first try</td><td class="m">1/2 → 2/2 → 2/2</td></tr><tr><td>Safety requirements met</td><td class="m">50% → 100% → 100%</td></tr><tr><td>Repairs per case</td><td class="m">— → 1.5 → 0.5</td></tr></tbody></table>
+      ${S.verified ? `<p class="hint">This run: 1 failure (T6), already covered by the v3 rule → no new proposal.</p>` : ''}</div></div>
+  </div></div>`;
+
+/* ---------- LOG ---------- */
+PANES.log = () => {
+  const subs = [['lessons','Lessons learned'],['traces','Traces'],['durability','Durability']];
+  let body = '';
+  if (logSub === 'lessons') body = `<div class="card"><div class="ch"><h3>Lessons learned</h3><span class="r sub">stored in Atlas · retrieved into the next run</span></div><div class="cb">
+    ${S.newLesson ? `<div class="lesson new"><span class="n">new</span><span>Fault lamps must latch: the jam timer output is only TRUE for as long as the eye stays blocked.</span><span class="src">this run · T6<br><span class="pill me">from repair</span></span></div>` : ''}
+    ${LESSONS.map(([t,src,n],i) => `<div class="lesson"><span class="n">#${String(LESSONS.length-i).padStart(2,'0')}</span><span>${t}</span><span class="src">${src}<br>seen ${n}</span></div>`).join('')}</div></div>`;
+  if (logSub === 'traces'){
+    const total = S.traces.reduce((s,t)=>s+t.ms,0) || 1; let off = 0;
+    body = `<div class="card"><div class="ch"><h3>Raindrop trace</h3><span class="r sub">${S.traces.length} spans · one interaction per job</span></div><div class="cb">
+      ${S.traces.length ? `<div class="wf">${S.traces.map(t => { const l = off/total*100, w = Math.max(1, t.ms/total*100); off += t.ms;
+        const c = t.err ? 'var(--stop)' : t.name.startsWith('agent') ? 'var(--me)' : t.name.startsWith('test') ? 'var(--sensor)' : 'var(--fl)';
+        return `<div class="wfr ${t.err?'err':''}"><span class="nm" title="${t.name}">${t.name} <span>${t.who}</span></span><span class="bar"><i style="left:${l}%;width:${w}%;background:${c}"></i></span><span class="ms">${t.ms>=1000?(t.ms/1000).toFixed(1)+'s':t.ms+'ms'}</span></div>`; }).join('')}</div>
+        <div class="mono" style="font-size:11px;display:flex;gap:16px;margin-top:14px;flex-wrap:wrap"><span class="t-me">■ model call</span><span class="t-fl">■ tool</span><span style="color:var(--sensor)">■ test</span><span class="t-stop">■ error</span></div>` : '<div class="empty" style="padding:24px">No spans yet</div>'}</div></div>`;
+  }
+  if (logSub === 'durability') body = `<div class="grid2">
+    <div class="card"><div class="ch"><h3>Worker</h3><span class="r">${PAUSED?'<span class="pill stop"><i></i>down</span>':'<span class="pill go"><i></i>alive</span>'}</span></div><div class="cb">
+      <div class="kv"><span>Worker</span><span class="mono">wkr-plc-01 · ip-10-42-1-20</span></div><div class="kv"><span>Heartbeat</span><span class="mono" id="hb">${PAUSED?'stale':'1s ago · every 3s'}</span></div>
+      <div class="kv"><span>Job</span><span class="mono">job_8c12 · attempt ${1+S.resumed}${S.resumed?' (resumed)':''}</span></div>
+      <p class="lbl" style="margin-top:16px">Stage checkpoints in Atlas</p>
+      <div class="ck">${STEPS.map((l,i) => `<span class="pill ${S.status[i]==='done'?(S.resumed?'me':'go'):S.status[i]==='pending'?'nt':'fl'}">${S.status[i]==='done'&&S.resumed?'↺ ':''}${l}</span>`).join('')}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px">
+        <button class="btn red sm" onclick="interrupt()" ${PAUSED||!S.started||S.verified?'disabled':''}>Interrupt worker</button>
+        <button class="btn sm" onclick="resume()" ${PAUSED?'':'disabled'}>Resume from MongoDB</button></div>
+      <p class="hint">${S.verified?'Interrupt is available while a run is in progress.':'Interrupt kills the worker mid-stage (exit 137). Resume reuses finished stages from Atlas; only the interrupted stage re-runs.'}</p></div></div>
+    <div class="card"><div class="ch"><h3>Events</h3></div><div class="cb" style="max-height:420px;overflow:auto">${S.events.slice().reverse().map(([t,m,l]) => `<div class="ev ${l||''}"><span>${t}</span><span>${m}</span></div>`).join('') || '<div class="empty" style="padding:24px">No events</div>'}</div></div></div>`;
+  return `<div style="margin-bottom:16px"><div class="seg">${subs.map(([k,l]) => `<button class="${logSub===k?'on':''}" onclick="logSub='${k}';renderPane()">${l}</button>`).join('')}</div></div>${body}`;
+};
+
+/* ================= export to real PLC ================= */
+const ICON_EXPORT = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>';
+const TARGETS = {
+  siemens: {n:'Siemens TIA Portal', f:'S7-1500 · SCL in PLCopen XML', file:'SortingStation_TIA.xml', addr:(d,i)=>d==='in'?`%I0.${i}`:`%Q0.${i}`,
+    notes:['TON becomes an IEC_TIMER instance in a data block','Program becomes FB "Main" called from OB1','NC contacts (Stop, E-stop) kept as-is — check your wiring']},
+  rockwell: {n:'Rockwell Studio 5000', f:'ControlLogix · L5X', file:'SortingStation.L5X', addr:(d,i)=>d==='in'?`Local:1:I.Data.${i}`:`Local:2:O.Data.${i}`,
+    notes:['Structured Text routine in MainProgram / MainTask','TON becomes TONR (Rockwell ST timer); PT 3 s → PRE 3000 ms','I/O as module tags on slots 1 (DI) and 2 (DO)']},
+  codesys: {n:'CODESYS 3.5', f:'PLCopen XML (IEC 61131-3)', file:'SortingStation_codesys.xml', addr:(d,i)=>d==='in'?`%IX0.${i}`:`%QX0.${i}`,
+    notes:['Imports as a PLC_PRG program; standard library TON','Works for Beckhoff TwinCAT 3, WAGO, Schneider and other CODESYS-based PLCs','Map %IX/%QX to your I/O module in the device tree']},
+  openplc: {n:'OpenPLC / generic', f:'IEC 61131-3 .st (as tested)', file:'main.st', addr:(d,i,a)=>a,
+    notes:['Exactly the program that passed 9/9 tests','Addresses unchanged (verified map for this rig)','Runs on OpenPLC v3/v4 and any IEC 61131-3 ST compiler']},
+};
+let exTarget = 'siemens';
+function usedIo(){
+  let ii = 0, oi = 0;
+  return IOBLOCK.filter(l => / AT %/.test(l)).map(l => { const [, name, addr] = l.match(/^\s*(\w+)\s+AT\s+(%Q[XW][\d.]+)/);
+    const d = /%QX1[234]\./.test(addr) ? 'in' : 'out'; return {name, addr, d, idx: d==='in' ? ii++ : oi++}; });
+}
+function openExport(){
+  if (!S.verified) return;
+  const el = document.createElement('div'); el.className = 'scrim'; el.id = 'exportScrim';
+  el.onclick = e => { if (e.target === el) closeExport(); };
+  document.body.appendChild(el); renderExport();
+}
+function closeExport(){ const el = $('#exportScrim'); if (el) el.remove(); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeExport(); });
+function renderExport(){
+  const T = TARGETS[exTarget], io = usedIo();
+  $('#exportScrim').innerHTML = `<div class="modal" role="dialog" aria-label="Export to PLC">
+    <div class="mh">${ICON_EXPORT}<h2>Export to a real PLC</h2><span class="pill go"><i></i>v2 · 7/7 verified</span><button class="x" onclick="closeExport()" aria-label="Close">✕</button></div>
+    <div class="mb">
+      <p class="lbl">Target platform</p>
+      <div class="targets">${Object.entries(TARGETS).map(([k,t]) => `<button class="tg ${exTarget===k?'on':''}" onclick="exTarget='${k}';renderExport()"><div class="n">${t.n}</div><div class="f">${t.f}</div></button>`).join('')}</div>
+      <p class="lbl">What's in the export</p>
+      <ul class="incl"><li>Program v2 (the version that passed every test)</li><li>13 I/O tags with comments and polarity notes</li>
+        <li>Requirement ↔ code traceability as comments (R1–R7)</li><li>Test evidence summary (9/9, run job_8c12)</li>${T.notes.map(n => `<li>${n}</li>`).join('')}</ul>
+      <p class="lbl">I/O address remapping</p>
+      <div class="card" style="box-shadow:none;max-height:240px;overflow:auto"><table><thead><tr><th>Tag</th><th>Tested on (OpenPLC)</th><th>${T.n}</th></tr></thead><tbody>${
+        io.map(v => `<tr><td class="m" style="color:var(--ink)">${v.name}</td><td class="m">${v.addr}</td><td class="m" style="color:var(--leaf);font-weight:600">${T.addr(v.d, v.idx, v.addr)}</td></tr>`).join('')}</tbody></table></div>
+      ${exTarget==='openplc' ? '' : `<div class="warnbox"><b>Before running on hardware:</b> the logic is verified in simulation only. Match the addresses to your real I/O modules, then do a dry run with outputs disabled and a site acceptance test. Never skip the safety circuit — E-stop must also be hard-wired.</div>`}
+    </div>
+    <div class="mf"><span class="fn">${T.file} · ${(exportText().length/1024).toFixed(1)} KB</span>
+      <span class="r"><button class="btn sm" onclick="copyExport()" id="copyBtn">Copy code</button><button class="btn pri sm" onclick="downloadExport()">${ICON_EXPORT} Download</button></span></div>
+  </div>`;
+}
+function remappedCode(){
+  const T = TARGETS[exTarget], map = Object.fromEntries(usedIo().map(v => [v.addr, T.addr(v.d, v.idx, v.addr)]));
+  return S.code.map(l => l.t.replace(/%Q[XW][\d.]+/g, a => map[a] || a)).join('\n');
+}
+function exportText(){
+  const T = TARGETS[exTarget], code = remappedCode(), esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const head = `MongoMation export (MOCK) · project prj_8c12 · program v2 · 7/7 requirements verified on Factory I/O · target ${T.n}`;
+  if (exTarget === 'openplc') return `(* ${head} *)\n${code}\n`;
+  if (exTarget === 'rockwell') return `<?xml version="1.0" encoding="UTF-8"?>\n<!-- ${head} -->\n<RSLogix5000Content SchemaRevision="1.0" TargetName="SortingStation" TargetType="Program">\n <Controller Use="Context" Name="MongoMation">\n  <Programs><Program Name="MainProgram" MainRoutineName="Main">\n   <Routines><Routine Name="Main" Type="ST"><STContent>\n${code.split('\n').map((l,i)=>`    <Line Number="${i}"><![CDATA[${l}]]></Line>`).join('\n')}\n   </STContent></Routine></Routines>\n  </Program></Programs>\n </Controller>\n</RSLogix5000Content>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!-- ${head} -->\n<project xmlns="http://www.plcopen.org/xml/tc6_0201">\n <fileHeader companyName="MongoMation" productName="MongoMation" productVersion="mock" creationDateTime="${new Date().toISOString()}"/>\n <types><pous>\n  <pou name="${exTarget==='codesys'?'PLC_PRG':'Main'}" pouType="${exTarget==='codesys'?'program':'functionBlock'}">\n   <body><ST><xhtml xmlns="http://www.w3.org/1999/xhtml">\n${esc(code)}\n   </xhtml></ST></body>\n  </pou>\n </pous></types>\n</project>\n`;
+}
+function downloadExport(){
+  const blob = new Blob([exportText()], {type: exTarget==='openplc' ? 'text/plain' : 'application/xml'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = TARGETS[exTarget].file; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  logEv(`Exported program v2 for ${TARGETS[exTarget].n} (${TARGETS[exTarget].file})`);
+}
+function copyExport(){
+  navigator.clipboard?.writeText(remappedCode()).then(() => { const b = $('#copyBtn'); if (b){ b.textContent = 'Copied ✓'; setTimeout(() => b && (b.textContent = 'Copy code'), 1200); } }).catch(() => {});
+}
+
+/* ================= run orchestration ================= */
+function logEv(m, l){ const d = new Date(); S.events.push([d.toTimeString().slice(0,8), m, l]); touch('log'); }
+function trace(name, who, ms, err){ S.traces.push({name, who, ms, err}); if (tab === 'log' && logSub === 'traces') renderPane(); }
+function newSpec(){ RUN++; PAUSED = false; S = fresh(); hmi.running = false; hmi.fault = false; hmi.forced = false; hmi.count = 0; hmi.box = null;
+  unlocked.clear(); unlocked.add('build'); Object.keys(dots).forEach(k => delete dots[k]); setFollow(true); tab = 'build'; renderTabs(); renderRunbar(); renderPane(); }
+function interrupt(){ PAUSED = true; $('#lampWorker').className = 'lamp bad'; const i = S.status.findIndex(s => s==='active'||s==='warn');
+  logEv(`Worker wkr-plc-01 exited 137 during "${STEPS[i]}" — no cleanup`, 'err'); renderRunbar(); renderPane(); }
+function resume(){ PAUSED = false; S.resumed++; $('#lampWorker').className = 'lamp';
+  const n = S.status.filter(s => s==='done').length;
+  logEv('Worker restarted · job_8c12 recovered (resumedFrom attempt 1)'); logEv(`Reused ${n} stage checkpoint(s) from Atlas; only the interrupted stage re-runs`, 'meta');
+  renderRunbar(); renderPane(); }
+
+async function startRun(text){
+  const my = ++RUN, ok = () => my === RUN;
+  S = fresh(); S.started = true; hmi.count = 0;
+  $('#specq').textContent = text; setFollow(true);
+  unlock('program'); unlock('log'); unlock('harness'); dots.program = dots.log = dots.harness = null;
+  S.cur = 0; setStep(0,'active','requirements'); tab = 'build'; renderTabs(); renderPane();
+  logEv('Job job_8c12 queued · claimed by wkr-plc-01'); trace('agent · requirements','claude-opus-5-5',1900);
+
+  for (const r of REQS){ await sleep(360); if(!ok())return; S.reqs.push(r); if (tab==='build') renderPane(); }
+  logEv('7 requirements extracted (2 safety)');
+  setStep(0,'active','binding I/O'); await sleep(600); if(!ok())return; trace('agent · scene binder','claude-sonnet-5-5',800);
+  S.code.push({t:'PROGRAM Main'}); IOBLOCK.forEach(t => S.code.push({t, c:'hw'})); paintCode(); touch('program');
+  logEv('Harness wrote 13 located variables from the verified I/O map');
+  setStep(0,'active','writing logic'); await sleep(500); if(!ok())return; trace('agent · codegen','claude-opus-5-5',3400);
+  for (const t of LOGIC){ S.code.push({t:''});
+    for (let c = 0; c <= t.length; c += 3){ if(!ok())return; S.code[S.code.length-1].t = t.slice(0,c); paintCode(true); await sleep(13); }
+    S.code[S.code.length-1].t = t; }
+  S.v1 = S.code.length; paintCode(); logEv(`Codegen v1 · ${S.code.length} lines`); setStep(0,'done',`v1 · ${S.code.length} lines`);
+  await sleep(700); if(!ok())return;
+
+  S.cur = 1; setStep(1,'active','preflight'); live('build'); if (tab==='build') renderPane();
+  const lines = [['dim','$ preflight  iec2c (MatIEC) main.st'],['ok','✓ static checks: inputs never written · every output assigned · no WHILE'],['ok','✓ MatIEC preflight ok (1.4 s)'],
+    ['dim','$ build  STruC++ 0.7.0 → program.zip (+ conf/modbus_slave.json)'],['','  compiling Config0 / Res0 / Main …'],['ok','✓ g++ build ok (38.2 s)'],
+    ['dim','$ upload  POST https://10.42.1.20:8443/api/upload-file'],['hi','  runtime restarted · waiting for Modbus :502'],['ok','✓ PLC status RUNNING · program sha 9e1c…'],['ok','✓ Factory I/O reconnected (watchdog)']];
+  const ph = [0,0,0,1,1,1,2,2,2,3], dn = {2:1,5:2,8:3,9:4};
+  for (let j = 0; j < lines.length; j++){ await sleep(j===4?1200:400); if(!ok())return; S.term.push(lines[j]); S.chainAt = ph[j]; if (dn[j]) S.chainDone = dn[j];
+    setStep(1,'active',['preflight','compiling','deploying','connecting'][ph[j]]); if (tab==='build' || (tab==='program' && progSub==='compile')) renderPane(); }
+  trace('tool · preflight','MatIEC',1400); trace('tool · compile','STruC++',38200); trace('tool · deploy','OpenPLC REST',6100);
+  logEv('OpenPLC RUNNING · Factory I/O connected'); setStep(1,'done','RUNNING'); await sleep(700); if(!ok())return;
+
+  S.cur = 2; S.hmiStep = 0; setStep(2,'active','process mimic'); unlock('hmi'); live('hmi'); touch('build'); touch('hmi');
+  for (let j = 0; j < HMI_PARTS.length; j++){ S.hmiStep = j; setStep(2,'active',HMI_PARTS[j][1]); touch('hmi'); touch('build');
+    await sleep(900); if(!ok())return; S.hmiBuilt = j+1; if (tab==='hmi') AFTER.hmi(); }
+  S.hmiStep = HMI_PARTS.length; trace('agent · hmi builder','claude-sonnet-5-5',2600); logEv('HMI generated · 24 tags bound');
+  setStep(2,'done','24 tags'); touch('hmi'); touch('build'); await sleep(1200); if(!ok())return;
+
+  S.cur = 3; setStep(3,'active','0 / 9'); unlock('verify'); live('verify'); touch('build');
+  for (let j = 0; j < TESTS.length; j++){
+    const id = TESTS[j][0]; S.tests[id] = 'run'; setStep(3,'active',`${j} / 9`); touch('verify'); touch('build');
+    await sleep(620); if(!ok())return;
+    S.tests[id] = id === 'T6' ? 'fail' : 'pass'; trace(`test · ${id}`,'factoryio',4000+j*300,id==='T6');
+    if (id === 'T6'){ logEv('T6 failed: Reset light dropped at t = 3.10 s, expected latched','err'); touch('verify','red'); } else touch('verify');
+    touch('build');
+  }
+  setStep(3,'warn','repairing T6'); S.repair = 1; touch('verify'); touch('build');
+  trace('agent · diagnosis','claude-opus-5-5',2100); await sleep(1600); if(!ok())return;
+  S.repair = 2; touch('verify'); touch('build'); trace('agent · repair','claude-opus-5-5',2900);
+  S.code = S.code.filter(l => !/ResetLight := JamTimer.Q|ConveyorLeft  := Running AND NOT JamTimer.Q/.test(l.t));
+  { const at = S.code.findIndex(l => l.t.startsWith('JamTimer(')) + 1;
+    S.code.splice(at, 0, ...['IF JamTimer.Q THEN FaultLeft := TRUE; END_IF;','IF ResetBtn AND AtLeftExit THEN FaultLeft := FALSE; END_IF;','ResetLight := FaultLeft;'].map(t => ({t, c:'add'})));
+    S.code.splice(S.code.findIndex(l => l.t.startsWith('ConveyorEntry')) + 1, 0, {t:'ConveyorLeft  := Running AND NOT FaultLeft;', c:'add'});
+    S.code.splice(S.code.findIndex(l => l.t.startsWith('  JamTimer')) + 1, 0, {t:'  FaultLeft : BOOL;', c:'add'}); }
+  touch('program'); logEv('Repair v2: latch FaultLeft, clear on Reset ∧ eye clear · recompiled · redeployed');
+  await sleep(1600); if(!ok())return;
+  S.repair = 3; S.tests.T6 = 'run'; S.tests.H2 = 'run'; setStep(3,'active','retesting'); touch('verify'); touch('build');
+  await sleep(1100); if(!ok())return;
+  S.tests.T6 = 'pass'; S.tests.H2 = 'pass'; S.repaired = true; S.newLesson = true; trace('test · T6 (v2)','factoryio',4300);
+  logEv('All 9 tests passed on v2'); logEv('Lesson stored: fault lamps must latch', 'meta'); setStep(3,'done','9 / 9'); touch('verify'); touch('log','me');
+  await sleep(1300); if(!ok())return;
+
+  S.cur = 4; S.verified = true; setStep(4,'done','7 / 7'); logEv('Project verified · 7/7 requirements with measured evidence');
+  live('build'); touch('build'); touch('hmi'); touch('harness','me');
+}
+
+renderTabs(); renderPane();
+/* opened from the control room: ?cab=CAB-01&ex=sorting preloads that cabinet's machine spec */
+(() => { const q = new URLSearchParams(location.search), ex = q.get('ex'), cab = q.get('cab');
+  
+  if (ex) { const b = document.querySelector(`[data-ex="${ex}"]`); if (b) b.click(); } })();
+</script>
+<script>
+/* ================= dashboard glue (Agent B) =================
+   Ali's run orchestration above is kept verbatim except: HMI tab removed (the live 3D machine + operator strip replace
+   the SVG mimic and the fake DCV picture), panes render into the right column, Generate goes through runAdapter(). */
+const DASH = window.DASH = {};
+const Q = new URLSearchParams(location.search);
+const CAB = Q.get('cab') || 'CAB-01';
+let MODE = 'mock';
+const MCLIVE = { on: false, plcRunning: false, version: null, detail: '', tagsLive: false, job: null, poll: 0, ioPoll: 0 };
+const toast = (t, ms = 2600) => { const el = $('#toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), ms); };
+
+/* ---------- HMI tab → operator strip + 3D ---------- */
+const _setTab = setTab;
+setTab = function (k, user) {
+  if (k === 'hmi') { flashOperator(); if (S.verified) setCam('monitor', true); return; }
+  _setTab(k, user); $('#scroll').scrollTo({ top: 0 });
+};
+const _live = live; live = k => _live(k === 'hmi' ? 'build' : k);
+function flashOperator() { const op = $('#op'); op.classList.remove('flash'); void op.offsetWidth; op.classList.add('flash'); setTimeout(() => op.classList.remove('flash'), 1400); }
+PANES.hmi = () => '';
+AFTER.hmi = () => {};
+
+/* ---------- machine model: the simulated Factory I/O rig behind the 3D view ---------- */
+const MC = { boxes: [], nid: 1, spawnT: 0.6, running: false, fault: false, estop: false, forced: {}, press: {}, jamT: 0, count: 0, tags: {},
+  auto: { test: false, t6: false, verified: false }, live: null };
+const plcLoaded = () => MCLIVE.on ? !!MCLIVE.plcRunning : S.status[1] === 'done';
+function pressBtn(n) { MC.press[n] = 0.25; window.F3D && F3D.pulse(n === 'Emergency stop' ? 'Emergency stop' : n); }
+function opStart(src) {
+  if (!plcLoaded()) { toast('No program on the PLC yet'); return false; }
+  pressBtn('Start');
+  if (MC.estop) { toast('E-stop latched — press Reset first'); return false; }
+  if (MC.fault) { toast('Fault latched — press Reset with the eye clear'); return false; }
+  MC.running = true; return true;
+}
+function opStop() { pressBtn('Stop'); MC.running = false; }
+function opEstop() { pressBtn('Emergency stop'); MC.estop = true; MC.running = false; }
+function opReset() {
+  pressBtn('Reset');
+  if (MC.estop) { MC.estop = false; logEv('E-stop released · Reset pressed'); }
+  if (MC.fault) {
+    if (MC.forced['At left exit'] === false) { toast('Left exit eye still blocked — fault stays latched (R7)'); return; }
+    MC.fault = false; MC.jamT = 0; hmi.hint = 'Fault cleared. Press START to restart — the line does not restart by itself (R7).'; logEv('Fault cleared by Reset (eye clear)');
+  }
+}
+function near(seg, k, v, w = .4) { return MC.boxes.some(b => b.seg === seg && Math.abs(b[k] - v) < w); }
+function stepMachine(dt) {
+  const prog = plcLoaded();
+  if (!prog) MC.running = false;
+  const F = MC.forced, run = MC.running && !MC.estop;
+  const convEntry = run, convLeft = run && !MC.fault, convRight = run, v = 1.5;
+  for (const k in MC.press) { MC.press[k] -= dt; if (MC.press[k] <= 0) delete MC.press[k]; }
+  // spawn
+  if (convEntry) { MC.spawnT -= dt; if (MC.spawnT <= 0 && !MC.boxes.some(b => b.seg === 'entry' && b.x < -7.6)) { MC.boxes.push({ id: MC.nid++, seg: 'entry', x: -8.8, z: 0, tall: Math.random() < .5 }); MC.spawnT = 2.8; } }
+  const xferBusy = () => MC.boxes.some(b => b.seg === 'xfer');
+  const ordered = MC.boxes.filter(b => b.seg === 'entry').sort((a, b) => b.x - a.x);
+  ordered.forEach((b, i) => {
+    if (!convEntry) return;
+    const ahead = ordered[i - 1]; let lim = ahead ? ahead.x - 0.95 : (xferBusy() ? -1.05 : 0.01);
+    b.x = Math.min(b.x + v * dt, lim);
+    if (b.x >= 0 && !xferBusy()) { b.seg = 'xfer'; b.x = 0; b.right = b.tall || F['High sensor'] === true; }
+  });
+  MC.boxes.forEach(b => {
+    if (b.seg === 'xfer') {
+      const laneOn = b.right ? convRight : convLeft; if (!laneOn) return;
+      b.z += (b.right ? 1 : -1) * v * dt; if (Math.abs(b.z) > 1.2) b.seg = b.right ? 'right' : 'left';
+    } else if (b.seg === 'left' || b.seg === 'right') {
+      const on = b.seg === 'left' ? convLeft : convRight; if (!on) return;
+      b.z += (b.seg === 'left' ? -1 : 1) * v * dt;
+      if (Math.abs(b.z) > 8.2) { b.seg = 'gone'; MC.count++; }
+    }
+  });
+  MC.boxes = MC.boxes.filter(b => b.seg !== 'gone');
+  // sensors (retro eyes are active-low: TRUE = clear)
+  const t = {
+    'High sensor': MC.boxes.some(b => b.seg === 'entry' && b.tall && Math.abs(b.x + 4) < .4),
+    'Low sensor': near('entry', 'x', -4), 'Pallet sensor': MC.boxes.some(b => b.seg === 'entry' && b.x > -1.9), 'Loaded': MC.boxes.some(b => b.seg === 'xfer'),
+    'At left entry': !near('left', 'z', -2), 'At left exit': !near('left', 'z', -6.5), 'At right entry': !near('right', 'z', 2), 'At right exit': !near('right', 'z', 6.5),
+    'Start': !!MC.press.Start, 'Reset': !!MC.press.Reset, 'Stop': !MC.press.Stop, 'Emergency stop': !MC.estop, 'Auto': true,
+  };
+  Object.assign(t, F);
+  // program (v2 semantics: jam timer latches FaultLeft)
+  if (run && !t['At left exit']) MC.jamT += dt; else MC.jamT = 0;
+  if (MC.jamT > 3 && !MC.fault) { MC.fault = true; logEv('Left lane stopped after 3.0 s · Reset light latched (R6 holds under fault)'); hmi.hint = 'Left lane stopped · Reset light latched.'; }
+  const xb = MC.boxes.find(b => b.seg === 'xfer');
+  Object.assign(t, { 'Conveyor entry': convEntry, 'Load': run && !!xb && Math.abs(xb.z) < .1, 'Unload': run && !!xb && Math.abs(xb.z) >= .1,
+    'Transf. left': run && !!xb && !xb.right, 'Transf. right': run && !!xb && xb.right, 'Conveyor left': convLeft, 'Conveyor right': convRight,
+    'Start light': MC.running, 'Reset light': MC.fault, 'Stop light': !MC.running, 'Counter': MC.count });
+  MC.tags = t;
+}
+function snapshot() { return { tags: MC.tags, boxes: MC.boxes, running: MC.running && !MC.estop, fault: MC.fault || MC.estop, forced: Object.keys(MC.forced) }; }
+
+/* ---------- IO strip ---------- */
+const IN = IO.filter(r => r[2] === 'in'), OUT = IO.filter(r => r[2] === 'out');
+function ioCell([n, a, , , note]) { return `<button class="io" data-n="${n}" title="${n} · ${a} — click to focus in 3D"><i class="led"></i><span class="n">${n}</span><span class="v">—</span><span class="a"><span>${a}</span>${note ? `<span>${note}</span>` : ''}<span class="f">F</span></span></button>`; }
+$('#iogrid').innerHTML = IN.map(ioCell).join('') + '<span class="gap"></span>' + OUT.map(ioCell).join('');
+const ioEls = {}; document.querySelectorAll('.io').forEach(el => ioEls[el.dataset.n] = el);
+const lastV = {};
+let selIO = null;
+window.selectIO = DASH.selectIO = n => {
+  selIO = selIO === n ? null : n;
+  Object.values(ioEls).forEach(el => el.classList.toggle('sel', el.dataset.n === selIO));
+  if (window.F3D) { F3D.focusTag(selIO); if (!selIO) syncCamera(true); }
+  if (selIO) { camAuto = false; paintShots(); }
+};
+$('#iogrid').onclick = e => { const b = e.target.closest('.io'); if (b) selectIO(b.dataset.n); };
+function paintIO() {
+  const t = MC.tags;
+  IO.forEach(row => {
+    const [n] = row, v = t[n], el = ioEls[n]; if (!el) return;
+    const s = typeof v === 'number' ? String(v).padStart(4, '0') : v ? 'TRUE' : 'FALSE';
+    row[3] = typeof v === 'number' ? String(v) : v ? 1 : 0; // keeps Ali's Program → I/O map live
+    if (lastV[n] !== s) { el.querySelector('.v').textContent = s; el.classList.toggle('on', typeof v === 'number' ? v > 0 : !!v);
+      el.querySelector('.led').className = 'led' + ((typeof v === 'number' ? v > 0 : v) ? ' on' : '');
+      if (lastV[n] !== undefined) { el.classList.remove('chg'); void el.offsetWidth; el.classList.add('chg'); } lastV[n] = s; }
+    el.classList.toggle('forced', n in MC.forced);
+  });
+}
+
+/* ---------- operator panel ---------- */
+$('#oStart').onclick = () => opStart();
+$('#oStop').onclick = opStop;
+$('#oReset').onclick = opReset;
+$('#oEstop').onclick = opEstop;
+$('#injectBtn').onclick = () => injectFault();
+let lastCnt = -1;
+function paintOperator() {
+  const prog = plcLoaded();
+  $('#lR').classList.toggle('on', MC.running && !MC.estop); $('#lF').classList.toggle('on', MC.fault); $('#lS').classList.toggle('on', !MC.running);
+  $('#oEstop').classList.toggle('latched', MC.estop);
+  ['#oStart', '#oStop', '#oReset', '#oEstop'].forEach(s => $(s).disabled = MCLIVE.on || (!prog && s !== '#oEstop'));
+  $('#injectBtn').disabled = !(S.verified || MCLIVE.on) || Object.keys(MC.forced).length > 0;
+  if (MC.count !== lastCnt) { const c = $('#cnt'); c.textContent = String(MC.count).padStart(4, '0'); if (lastCnt >= 0) { c.classList.remove('tick'); void c.offsetWidth; c.classList.add('tick'); } lastCnt = MC.count; }
+  const h = MCLIVE.on ? `Live · ${MCLIVE.rigLive ? 'rig values streaming' : 'rig offline — last known values'} · HMI writes are not exposed by the bridge yet` : !prog ? (S.started ? 'PLC has no program yet — the run deploys one in step 2.' : 'No program on the PLC yet — describe the machine to generate one.')
+    : MC.estop ? 'E-STOP latched · press Reset to release.'
+    : Object.keys(MC.forced).length ? `FORCED · ${Object.entries(MC.forced).map(([k, v]) => `${k} = ${v ? 'TRUE' : 'FALSE'}`).join(', ')}`
+    : MC.fault ? 'ALARM · Left exit jam > 3 s — press Reset, then Start.'
+    : !S.verified && S.started ? 'Tests are driving the rig — you can still Stop / E-stop.'
+    : MC.running ? 'Running · buttons write to the PLC through Factory I/O.' : 'Line stopped · press Start.';
+  const oh = $('#opHint'); if (oh.textContent !== h) oh.textContent = h;
+  const al = $('#alarmHud'), forced = Object.keys(MC.forced).length;
+  const txt = MC.estop ? 'EMERGENCY STOP' : MC.fault ? 'ALARM · Left exit jam > 3 s' : forced ? `${Object.keys(MC.forced)[0]} forced ${Object.values(MC.forced)[0] ? 'TRUE' : 'FALSE'}` : '';
+  al.className = 'hud' + (txt ? ' on' : '') + (MC.estop || MC.fault ? ' alarm' : forced ? ' forced' : '');
+  if (txt) $('#alarmTxt').textContent = txt;
+}
+
+/* fault injection: forces a sensor in the sim (live mode: POST /api/fault) and lets the program react */
+const FAULTS = { left: ['At left exit', false, 'Left exit eye blocked'], pallet: ['Pallet sensor', true, 'Pallet sensor stuck ON'], high: ['High sensor', true, 'High sensor stuck ON'], loaded: ['Loaded', false, 'Loaded sensor dead'] };
+injectFault = function () {
+  const sel = $('#faultSel').value, [tag, val, label] = FAULTS[sel];
+  if (MCLIVE.on) return liveFault(sel);
+  if (!MC.running && !MC.fault) opStart();
+  MC.forced[tag] = val; hmi.forced = tag === 'At left exit';
+  S.faults.push([label, 'active']);
+  if (sel === 'left') { logEv('Fault injected via Factory I/O Web API: At left exit forced FALSE (read-back ✓)', 'err'); trace('fault · force At left exit', 'factoryio', 300); }
+  else logEv(`Fault injected: ${$('#faultSel').selectedOptions[0].text} · forced ${val ? 'TRUE' : 'FALSE'} (read-back ✓)`, 'err');
+  window.F3D && F3D.focusTag(tag); camAuto = false; paintShots();
+  toast(`${tag} forced ${val ? 'TRUE' : 'FALSE'} — watch the program react`);
+  if (tab === 'program' || tab === 'log') renderPane();
+  setTimeout(() => {
+    delete MC.forced[tag]; hmi.forced = false; S.faults[S.faults.length - 1][1] = 'handled';
+    logEv(sel === 'left' ? 'Fault released · harness: handled by v2, nothing new to learn' : `Fault released · ${label}: program reacted as specified`, 'meta');
+    window.F3D && F3D.focusTag(null); camAuto = true; paintShots(); syncCamera(true); touch('log');
+  }, 7000 / SPEED);
+};
+paintHmi = () => {}; bindHmi = () => {}; // SVG mimic retired
+
+/* ---------- PLC card ---------- */
+let scan = 4.2;
+function paintPLC() {
+  const prog = plcLoaded(), dep = !MCLIVE.on && S.cur === 1 && S.status[1] === 'active';
+  const st = $('#plcState'); st.className = 'state ' + (prog ? 'run' : dep ? 'dep' : '');
+  $('#plcRun').textContent = prog ? 'RUN' : dep ? 'DEPLOY' : 'STOP';
+  $('#plcSub').textContent = prog ? (MC.estop ? 'e-stop latched' : MC.fault ? 'fault latched' : MC.running ? 'line running' : 'line stopped') : dep ? (S.sub[1] || 'deploying') : MCLIVE.on ? (MCLIVE.detail || 'live · rig offline') : 'no program';
+  $('#plcProg').textContent = MCLIVE.on ? (MCLIVE.version ? `v${MCLIVE.version}` : '—') : prog ? `${S.repaired ? 'v2 · repair' : 'v1 · codegen'} · sha 9e1c` : S.code.length ? (S.cur === 0 ? 'v1 · writing' : 'v1 · compiling') : '—';
+  scan += (Math.random() - .5) * .3; scan = Math.max(3.6, Math.min(4.9, scan));
+  $('#plcScan').textContent = prog ? `${scan.toFixed(1)} ms` : '—';
+  $('#plcMb').textContent = (prog || MCLIVE.on) ? '10.42.1.20:502 · unit 1' : '10.42.1.20:502 · idle';
+}
+
+/* ---------- camera follows the run ---------- */
+let camAuto = true, curShot = 'overview', labelsOn = true;
+const CAPS = {
+  idle: ['01', 'Sorting by Height (Basic)', 'Factory I/O scene · 24 tags · waiting for a spec'],
+  overview: ['01', 'Reading the spec', 'requirements → I/O binding → Structured Text'],
+  descend: ['02', 'Compile & deploy', 'MatIEC preflight → STruC++ → OpenPLC v4 → Factory I/O'],
+  hmi: ['03', 'Binding the HMI', 'sensors, actuators and operator panel bound to live tags'],
+  test: ['04', 'Testing on the live simulation', '9 tests · 3 hidden · measured evidence'],
+  verified: ['05', 'Verified · monitoring', '7 / 7 requirements · program running on OpenPLC'],
+};
+function runPhase() { if (!S.started) return 'idle'; if (S.verified) return 'verified'; return ['overview', 'descend', 'hmi', 'test', 'verified'][Math.max(0, S.cur)]; }
+const PHASE_SHOT = { idle: 'overview', overview: 'overview', descend: 'descend', hmi: 'sensors', test: 'sensors', verified: 'monitor' };
+let lastPhase = null, lastCap = '';
+function syncCamera(force) {
+  const ph = runPhase();
+  if (window.F3D && camAuto && (force || ph !== lastPhase)) { const s = PHASE_SHOT[ph]; if (!selIO && !Object.keys(MC.forced).length) { F3D.focusTag(null); F3D.setShot(s); curShot = s; paintShots(); } }
+  lastPhase = ph;
+  let [n, t, s] = CAPS[ph];
+  if (ph === 'test') { const done = Object.values(S.tests).filter(v => v === 'pass' || v === 'fail').length; s = S.repair && !S.repaired ? 'T6 failed · self-repair v2 in progress' : `${done} / 9 tests · ${S.tests.T6 === 'run' ? 'T6 forcing the left exit eye' : 'tests drive Start / Stop on the rig'}`; }
+  if (ph === 'overview' && S.sub[0]) s = S.sub[0];
+  if (ph === 'descend' && S.sub[1]) s = `${S.sub[1]} · ${s}`;
+  if (ph === 'verified') s = `7 / 7 requirements · ${MC.running ? `line running · ${MC.count} boxes sorted` : 'line stopped'}`;
+  const key = n + t + s;
+  if (key !== lastCap) { const c = $('#cap'); if (lastCap.slice(0, 2) !== n) { c.classList.remove('swap'); void c.offsetWidth; c.classList.add('swap'); }
+    $('#capN').textContent = n; $('#capT').textContent = t; $('#capS').textContent = s; lastCap = key; }
+}
+DASH.syncCamera = syncCamera;
+function paintShots() {
+  document.querySelectorAll('#shots button').forEach(b => {
+    const s = b.dataset.s;
+    b.classList.toggle('on', s === 'auto' ? camAuto : s === 'labels' ? labelsOn : s === 'comp' ? $('#stage').classList.contains('comp') : (!camAuto && s === curShot));
+  });
+}
+$('#shots').onclick = e => {
+  const b = e.target.closest('button'); if (!b || b.disabled) return; const s = b.dataset.s;
+  if (s === 'auto') { camAuto = true; selIO = null; Object.values(ioEls).forEach(el => el.classList.remove('sel')); syncCamera(true); }
+  else if (s === 'labels') { labelsOn = !labelsOn; window.F3D && F3D.setLabels(labelsOn ? 'all' : 'auto'); }
+  else if (s === 'comp') toggleRack();
+  else { camAuto = false; curShot = s; if (window.F3D) { F3D.focusTag(null); F3D.setShot(s); } }
+  paintShots();
+};
+
+/* ---------- PLC rack component slot (Agent D: plcmacro.js → createPLC(host)) ---------- */
+let rack = null;
+fetch('./plcmacro.js', { method: 'HEAD' }).then(r => { if (r.ok) $('#shots [data-s=comp]').disabled = false; }).catch(() => {});
+async function toggleRack() {
+  const st = $('#stage'), on = !st.classList.contains('comp');
+  st.classList.toggle('comp', on);
+  if (on) {
+    window.F3D && F3D.setPaused(true); // one WebGL scene renders at a time
+    try { const m = await import('./plcmacro.js'); rack = m.createPLC($('#rack'), { reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches }); rack.setIO && rack.setIO(snapshot()); }
+    catch (err) { $('#rack').innerHTML = `<div class="rackph"><div><b>PLC rack component</b>plcmacro.js not ready yet (${err.message})</div></div>`; }
+  } else {
+    if (rack && rack.dispose) rack.dispose(); rack = null; $('#rack').innerHTML = '';
+    window.F3D && F3D.setPaused(false);
+  }
+  paintShots();
+}
+
+/* ---------- run → rig coupling (tests drive the simulated rig) ---------- */
+function syncRunToRig() {
+  if (MCLIVE.on) return;
+  if (S.cur === 3 && !MC.auto.test && plcLoaded()) { MC.auto.test = true; if (!MC.running) opStart(); }
+  // T6 forces the left exit eye; on v1 the bug shows up (fault lamp) until the self-repair lands
+  const t6 = S.cur === 3 && (S.tests.T6 === 'run' || S.tests.T6 === 'fail') && !S.repaired && S.repair < 3;
+  if (t6 && !MC.auto.t6) { MC.auto.t6 = true; MC.forced['At left exit'] = false; if (camAuto && window.F3D) F3D.focusTag('At left exit'); }
+  if (!t6 && MC.auto.t6) { MC.auto.t6 = false; delete MC.forced['At left exit']; MC.fault = false; MC.jamT = 0; if (!MC.running && plcLoaded()) opStart(); if (camAuto && window.F3D) { F3D.focusTag(null); syncCamera(true); } }
+  if (S.verified && !MC.auto.verified) { MC.auto.verified = true; if (!MC.running && !MC.estop) opStart(); }
+}
+const _newSpec = newSpec;
+newSpec = function () {
+  _newSpec(); Object.assign(MC, { boxes: [], running: false, fault: false, estop: false, forced: {}, jamT: 0, count: 0, auto: { test: false, t6: false, verified: false } });
+  camAuto = true; syncCamera(true); $('#scroll').scrollTo({ top: 0 });
+};
+
+/* ---------- main loop: 20 Hz sim + paint, paused while the tab is hidden ---------- */
+let lastT = performance.now(), plcT = 0;
+function tick() {
+  if (document.hidden) { lastT = performance.now(); return; }
+  const now = performance.now(), dt = Math.min(0.1, (now - lastT) / 1000) * (SPEED > 1 ? Math.min(SPEED, 4) : 1); lastT = now;
+  syncRunToRig();
+  if (!MCLIVE.on) stepMachine(dt);
+  window.F3D && F3D.setIO(snapshot());
+  rack && rack.setIO && rack.setIO(snapshot());
+  paintIO(); paintOperator(); syncCamera(false);
+  plcT += dt; if (plcT > .5) { plcT = 0; paintPLC(); if (tab === 'program' && progSub === 'io') renderPane(); }
+}
+setInterval(tick, 50);
+stepMachine(0); paintIO(); paintOperator(); paintPLC();
+
+/* ================= mode switch: mock | live ================= */
+const API = 'http://localhost:5190', API_READ = 'http://localhost:5191';
+const RUNNERS = { mock: text => startRun(text), live: text => liveRun(text) };
+/** runAdapter(text): the single entry point for a run. Mock replays Ali's orchestration; live drives Agent C's bridge (API.md). */
+function runAdapter(text) { return RUNNERS[MODE](text); }
+window.runAdapter = runAdapter;
+
+$('#mode').onclick = async e => {
+  const b = e.target.closest('button'); if (!b) return; const m = b.dataset.m; if (m === MODE) return;
+  if (S.started && !S.verified && !confirm('A run is in progress. Switch mode and discard it?')) return;
+  setMode(m);
+};
+async function setMode(m) {
+  MODE = m; document.querySelectorAll('#mode button').forEach(x => x.classList.toggle('on', x.dataset.m === m));
+  history.replaceState(null, '', (() => { const q = new URLSearchParams(location.search); q.set('mode', m); return '?' + q; })());
+  if (S.started) newSpec();
+  if (m === 'live') { MCLIVE.on = true; MCLIVE.harness = null; MC.forced = {}; clearInterval(MCLIVE.hPoll); MCLIVE.hPoll = setInterval(liveHealth, 5000); await liveHealth(); MCLIVE.ioPoll = setInterval(liveIO, 1000); liveIO(); toast('Live · the run will create a REAL job on the MongoMation worker'); }
+  else { MCLIVE.on = false; MCLIVE.tagsLive = false; clearInterval(MCLIVE.ioPoll); clearInterval(MCLIVE.poll); clearInterval(MCLIVE.hPoll); Object.assign(MC, { tags: {}, boxes: [], running: false, fault: false, estop: false, forced: {}, count: 0 }); stepMachine(0); $('#ioSrcT').textContent = 'Factory I/O sim · 20 Hz'; $('#ioSrc').classList.remove('stale'); ['#lampAtlas', '#lampWorker', '#lampRig'].forEach(s => $(s).className = 'lamp'); }
+  renderPane();
+}
+async function j(url, opt) { const r = await fetch(url, opt); const body = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(body.error || r.status), { code: body.code, status: r.status }); return body; }
+async function liveHealth() {
+  try { // E's read API (:5191) is the source of truth for lamps; fall back to C's bridge
+    const r = await j(API_READ + '/api/health');
+    const rigLive = !!(r.rig && r.rig.ageMs < 15000 && r.rig.factoryio && r.rig.factoryio.reachable);
+    $('#lampAtlas').className = 'lamp' + (r.atlas && r.atlas.connected ? '' : ' bad');
+    $('#lampWorker').className = 'lamp' + (r.worker && r.worker.alive ? '' : ' bad');
+    $('#lampRig').className = 'lamp' + (rigLive ? '' : ' bad');
+    MCLIVE.detail = rigLive ? 'rig live' : 'rig offline';
+    MCLIVE.read = r;
+    MCLIVE.health = { atlas: r.atlas && r.atlas.connected ? 'connected' : 'down', worker: { online: !!(r.worker && r.worker.alive), lastBeatAgeMs: r.worker && r.worker.heartbeatAgeMs }, rig: { live: rigLive } };
+    return MCLIVE.health;
+  } catch (e) {}
+  try {
+    const h = await j(API + '/api/health');
+    $('#lampAtlas').className = 'lamp' + (h.atlas === 'connected' ? '' : ' bad');
+    $('#lampWorker').className = 'lamp' + (h.worker && h.worker.online ? '' : ' bad');
+    $('#lampRig').className = 'lamp' + (h.rig && h.rig.live ? '' : ' bad');
+    MCLIVE.detail = h.rig && h.rig.live ? 'rig live' : 'rig offline';
+    MCLIVE.health = h; return h;
+  } catch (err) { ['#lampAtlas', '#lampWorker', '#lampRig'].forEach(s => $(s).className = 'lamp bad'); MCLIVE.detail = 'bridge :5190 unreachable'; MCLIVE.health = null; return null; }
+}
+/* live tag values: name-matched onto the 24 scene tags; stale values are shown as stale, never animated */
+async function liveIO() {
+  if (!MCLIVE.on) return;
+  try {
+    const r = await j(API + '/api/io'); MCLIVE.tagsLive = true; MCLIVE.rigLive = !!r.live;
+    $('#ioSrcT').textContent = r.live ? `Live rig · ${r.sceneId || 'scene'} · ${Math.round((r.ageMs || 0) / 100) / 10}s` : `Live rig offline · last known ${r.checkedAt ? new Date(r.checkedAt).toLocaleTimeString() : 'never'}`;
+    $('#ioSrc').classList.toggle('stale', !r.live);
+    { const t = {}; IO.forEach(([n]) => { if (n in (r.tags || {})) t[n] = r.tags[n]; }); MC.tags = Object.assign({}, MC.tags, t);
+      MC.forced = Object.fromEntries((r.forced || []).filter(n => n in t).map(n => [n, t[n]])); MC.boxes = []; MC.count = +MC.tags.Counter || 0;
+      MC.running = !!MC.tags['Start light'] && !!MC.tags['Conveyor entry']; MC.fault = !!MC.tags['Reset light']; MC.estop = MC.tags['Emergency stop'] === false; }
+    MCLIVE.plcRunning = !!(r.openplc && r.openplc.running);
+  } catch (err) { MCLIVE.tagsLive = true; MCLIVE.rigLive = false; $('#ioSrcT').textContent = 'Live bridge :5190 unreachable · values frozen'; $('#ioSrc').classList.add('stale'); }
+}
+const LIVE_STEP = { requirements: 0, io_design: 0, state_machine: 0, plc_code: 0, preflight: 1, compile: 1, deploy: 1, simulate: 2, tests: 3, diagnosis: 3, repair: 3, verification: 4, deliver: 4 };
+async function liveRun(text) {
+  const h = await liveHealth();
+  if (!h) { toast('Live bridge not reachable on :5190 — start Agent C\'s server or switch to Mock', 4000); return; }
+  let scene = 'sorting-by-height';
+  try { const sc = await j(API + '/api/scenes'); const s = (sc.scenes || []).find(s => s.runnable && /sort/.test(s.id)) || (sc.scenes || []).find(s => s.runnable); if (s) scene = s.id; else { toast('No runnable (verified) scene on the bridge', 4000); return; } } catch (e) {}
+  if (!confirm(`Create a REAL engineering job on the MongoMation worker?\n\nScene: ${scene}\nWorker: ${h.worker && h.worker.online ? 'online' : 'OFFLINE (job will stay queued)'}\n\nThis calls real models and costs money.`)) return;
+  let res; try { res = await j(API + '/api/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ specText: text, sceneId: scene }) }); }
+  catch (err) { toast(`Run rejected: ${err.code || ''} ${err.message}`, 5000); return; }
+  RUN++; S = fresh(); S.started = true; S.live = { jobId: res.jobId, scene, status: res.status }; $('#specq').textContent = text; setFollow(true);
+  unlock('program'); unlock('log'); unlock('harness'); S.cur = 0; setStep(0, 'active', 'queued'); tab = 'build'; renderTabs(); renderPane();
+  logEv(`Job ${res.jobId} created · ${res.worker && res.worker.online ? 'worker online' : 'waiting for a worker'}`);
+  let since = null; const my = RUN;
+  clearInterval(MCLIVE.poll);
+  MCLIVE.poll = setInterval(async () => {
+    if (my !== RUN || !MCLIVE.on) return clearInterval(MCLIVE.poll);
+    try { const d = await j(`${API}/api/run/${res.jobId}${since ? '?since=' + encodeURIComponent(since) : ''}`); applyLive(d); if (d.events && d.events.length) since = d.events[d.events.length - 1].ts; if (d.done) clearInterval(MCLIVE.poll); }
+    catch (err) { setStep(Math.max(0, S.cur), 'active', 'bridge error'); }
+  }, 1500);
+}
+/* map the real job document onto Ali's run state so every pane renders real data */
+function applyLive(d) {
+  const L = S.live; L.job = d.job; L.status = d.job && d.job.status;
+  (d.events || []).forEach(e => S.events.push([new Date(e.ts).toTimeString().slice(0, 8), `${e.stage ? e.stage + ' · ' : ''}${e.message}`, e.level === 'error' ? 'err' : e.level === 'warn' ? 'meta' : '']));
+  if (d.requirements && d.requirements.length) S.reqs = d.requirements.map(r => [r.id, r.text || r.description || JSON.stringify(r).slice(0, 120), /safety/i.test(JSON.stringify(r)) ? 1 : 0, []]);
+  if (d.plc && d.plc.source) { S.code = d.plc.source.split('\n').map(t => ({ t, c: /\bAT\s+%/.test(t) ? 'hw' : '' })); MCLIVE.version = d.plc.version; S.repaired = d.plc.version > 1; }
+  if (d.compiles && d.compiles.length) { S.term = []; d.compiles.forEach(c => { S.term.push(['dim', `$ ${c.stage}  ${c.toolchain || ''}`]); (c.log || '').split('\n').slice(-12).forEach(l => l && S.term.push(['', '  ' + l])); S.term.push([c.ok ? 'ok' : 'hi', `${c.ok ? '✓' : '✕'} ${c.stage} ${c.status} (${((c.durationMs || 0) / 1000).toFixed(1)} s)`]); }); }
+  (d.tests || []).forEach(t => { S.tests[t.testId] = t.verdict === 'passed' ? 'pass' : t.verdict === 'failed' ? 'fail' : 'run'; });
+  const stages = d.stages || [];
+  S.status = STEPS.map(() => 'pending');
+  stages.forEach(st => { const i = LIVE_STEP[st.stage]; if (i === undefined) return; const cur = S.status[i];
+    const ns = st.status === 'running' ? 'active' : st.status === 'failed' || st.status === 'blocked' ? 'warn' : 'done';
+    if (cur === 'pending' || ns === 'active' || (ns === 'warn' && cur !== 'active')) S.status[i] = ns; S.sub[i] = st.stage.replace('_', ' '); });
+  const act = S.status.findIndex(s => s === 'active' || s === 'warn'); S.cur = act >= 0 ? act : Math.max(0, S.status.lastIndexOf('done'));
+  if (d.deployments && d.deployments.length) { S.chainDone = 4; MCLIVE.plcRunning = true; }
+  if (d.done) { S.verified = d.project && d.project.status === 'verified'; if (S.verified) { S.cur = 4; S.status[4] = 'done'; } setStep(S.cur, S.status[S.cur], d.job.status); logEv(`Job ${d.job.status}${d.job.error ? ' · ' + d.job.error : ''}`, d.job.status === 'completed' ? '' : 'err'); }
+  if (S.cur >= 2) unlock('verify');
+  renderRunbar(); if (follow) live(STEP_TAB[S.cur] || 'build'); renderPane();
+}
+/* read-only: load the newest real job from Atlas (no cost) so live panes can be inspected without starting a run */
+async function liveAttach() {
+  let id = null;
+  try { const d = await j(API_READ + '/api/dashboard'); id = (d.activeJob && d.activeJob.id) || (d.lastJob && d.lastJob.id) || (d.latestJobs && d.latestJobs.generate && d.latestJobs.generate.id); } catch (e) {}
+  if (!id) { toast('No job found on the read API (:5191)'); return; }
+  let d; try { d = await j(`${API}/api/run/${id}`); } catch (e) { toast(`Bridge :5190 could not load job ${id}`); return; }
+  RUN++; S = fresh(); S.started = true; S.live = { jobId: id, scene: d.job && d.job.sceneId, status: d.job && d.job.status, attached: true };
+  $('#specq').textContent = (d.job && d.job.specText) || (d.project && d.project.specText) || ''; setFollow(false);
+  unlock('program'); unlock('log'); unlock('harness'); unlock('verify');
+  applyLive(Object.assign({}, d, { done: false }));
+  if (d.done) { const ok = d.project && /verified/.test(d.project.status || ''); S.verified = d.project && d.project.status === 'verified'; logEv(`Attached to job ${id} · ${d.job.status} · project ${d.project ? d.project.status : '—'}`, ok ? '' : 'err'); }
+  else if (!(MCLIVE.health && MCLIVE.health.worker.online)) logEv(`Job ${id} says "${d.job.status}" but the worker heartbeat is stale — it is not actually progressing`, 'err');
+  renderRunbar(); tab = 'build'; renderTabs(); renderPane();
+}
+window.liveAttach = liveAttach;
+async function liveFault(sel) {
+  const pid = S.live && S.live.job && S.live.job.projectId;
+  if (!pid) { toast('Live fault injection needs a verified live project'); return; }
+  if (!confirm('Create a REAL fault_and_improve job on the rig?')) return;
+  try { const r = await j(API + '/api/fault', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId: pid, faultId: sel }) }); logEv(`Fault job ${r.jobId} created`, 'err'); toast('Fault job created'); }
+  catch (err) { toast(`Fault rejected: ${err.code || ''} ${err.message}`, 4000); }
+}
+/* live banner inside the Build pane */
+const _paneBuild = PANES.build;
+PANES.build = () => {
+  const html = _paneBuild();
+  if (!MCLIVE.on) return html;
+  const h = MCLIVE.health;
+  const box = `<div class="livebox"><b>Live mode</b> · bridge ${API} · ${h ? `Atlas ${h.atlas} · worker ${h.worker && h.worker.online ? 'online' : 'offline'} · rig ${h.rig && h.rig.live ? 'live' : 'offline'}` : 'unreachable'}${S.live ? `<br>job <b>${S.live.jobId}</b> · ${S.live.status || 'queued'} · scene ${S.live.scene}` : '<br>Generate creates a real job (real models, real cost). Nothing in this mode is simulated.'}${!S.started ? `<div style="margin-top:10px"><button class="btn sm" onclick="liveAttach()">View latest real job (read-only)</button></div>` : ''}${S.live && h && !h.worker.online && !/completed|failed|blocked|interrupted/.test(S.live.status || '') ? '<br><span style="color:var(--stop)">Worker heartbeat is stale — this job is not progressing.</span>' : ''}</div>`;
+  const mark = '<p class="lbl" style="margin-top:34px">';
+  return html.includes(mark) ? html.replace(mark, box + mark) : box + html;
+};
+
+/* live Harness / Log·Lessons from E's read API */
+const _paneHarness = PANES.harness, _paneLog = PANES.log;
+async function loadHarness() { if (MCLIVE.hLoading) return; MCLIVE.hLoading = true; try { MCLIVE.harness = await j(API_READ + '/api/harness'); } catch (e) { MCLIVE.harness = { error: e.message }; } MCLIVE.hLoading = false; if (tab === 'harness' || tab === 'log') renderPane(); }
+const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+PANES.harness = () => {
+  if (!MCLIVE.on) return _paneHarness();
+  const H = MCLIVE.harness; if (!H) { loadHarness(); return '<div class="empty"><b>Loading harness</b>from Atlas via :5191</div>'; }
+  if (H.error || H.connected === false) return `<div class="empty"><b>Read API unavailable</b>${esc(H.error)}</div>`;
+  const vs = H.versions || [], g = (H.gate || [])[0], P = H.latestProposal;
+  const pct = v => v == null ? '—' : (v <= 1 ? Math.round(v * 100) + '%' : v);
+  return `<div class="stack">
+  <div class="card"><div class="ch"><h2>Harness versions</h2><span class="r sub">live · ${vs.length} versions · ${H.proposalCount || 0} proposals</span></div>
+    <div class="cb"><div class="vtrack">${vs.map((v, i) => `${i ? '<span class="varrow">→</span>' : ''}<div class="vnode ${H.active && H.active.version === v.version ? 'cur' : v.verdict === 'rejected' ? 'dead' : ''}"><div class="v">v${v.version}</div><div class="d">${esc((v.rationale || v.gateNote || `${v.rulesCount} rules`).slice(0, 90))}</div><span class="pill ${v.verdict === 'kept' ? 'go' : v.verdict === 'rejected' ? 'stop' : 'nt'}">${esc(v.verdict || 'pending')}</span></div>`).join('') || '<div class="empty" style="padding:20px">No versions in Atlas yet</div>'}</div></div></div>
+  ${H.active ? `<div class="card"><div class="ch"><h3>Active · v${H.active.version}</h3><span class="r"><span class="pill go"><i></i>kept</span></span></div><div class="cb"><p class="lbl">Rules</p><div class="diff">${(H.active.rules || []).map(r => `<div class="c">- ${esc(r)}</div>`).join('') || '<div class="c">(none)</div>'}</div></div></div>` : ''}
+  ${g ? `<div class="card"><div class="ch"><h3>Benchmark gate · v${g.parent ?? '?'} → v${g.version ?? '?'}</h3><span class="r"><span class="pill ${g.verdict === 'kept' ? 'go' : 'stop'}">${esc(g.verdict || '')}</span></span></div><div class="cb"><table><tbody>${['requirement_satisfaction', 'safety_pass_rate', 'compile_first_try', 'test_pass_rate', 'repairs_per_case', 'cost_usd_per_case'].map(k => `<tr><td>${k.replace(/_/g, ' ')}</td><td class="m">${pct(g.parentScores && g.parentScores[k])} → ${pct(g.scores && g.scores[k])}</td></tr>`).join('')}</tbody></table>${g.gateNote ? `<p class="hint">${esc(g.gateNote)}</p>` : ''}</div></div>` : ''}
+  ${P ? `<div class="card"><div class="ch"><h3>Latest proposal</h3><span class="r sub">${esc(P.verdict || '')}</span></div><div class="cb"><p style="margin:0 0 10px;font-size:13.5px;color:var(--ink2)">${esc(P.change || P.rationale || '')}</p>${(P.diff || []).length ? `<div class="diff">${P.diff.map(l => `<div class="${String(l).startsWith('+') ? 'p' : String(l).startsWith('-') ? 'm' : 'c'}">${esc(l)}</div>`).join('')}</div>` : ''}</div></div>` : ''}
+  </div>`;
+};
+PANES.log = () => {
+  if (!MCLIVE.on || logSub !== 'lessons') return _paneLog();
+  const H = MCLIVE.harness; if (!H) loadHarness();
+  const L = (H && H.lessons) || [];
+  const subs = [['lessons', 'Lessons learned'], ['traces', 'Traces'], ['durability', 'Durability']];
+  return `<div style="margin-bottom:16px"><div class="seg">${subs.map(([k, l]) => `<button class="${logSub === k ? 'on' : ''}" onclick="logSub='${k}';renderPane()">${l}</button>`).join('')}</div></div>
+  <div class="card"><div class="ch"><h3>Lessons learned</h3><span class="r sub">live · ${H ? (H.lessonCount ?? L.length) : '…'} in Atlas</span></div><div class="cb">
+  ${L.map((x, i) => `<div class="lesson"><span class="n">#${String(L.length - i).padStart(2, '0')}</span><span>${esc(x.pattern)}${x.fix ? ` — ${esc(x.fix)}` : ''}</span><span class="src">${x.verified ? 'verified' : 'unverified'}<br>${x.createdAt ? new Date(x.createdAt).toLocaleDateString() : ''}</span></div>`).join('') || `<div class="empty" style="padding:24px">${H ? 'No lessons in Atlas yet' : 'Loading…'}</div>`}</div></div>`;
+};
+
+/* ---------- boot ---------- */
+document.title = `${CAB} · PLC dashboard · MongoMation`;
+$('#cCab').textContent = CAB;
+$('#back').href = `./room.html?cab=${encodeURIComponent(CAB)}`;
+requestAnimationFrame(() => requestAnimationFrame(() => $('#veil').classList.add('off')));
+if (Q.get('mode') === 'live') setMode('live');
+
+</script>
+<script type="module">
+import { createFactory } from './factory3d.js';
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const f = createFactory(document.getElementById('world'), { reducedMotion: reduced, offset: 0, quality: 'low', labels: 'all' });
+window.F3D = f;
+if (new URLSearchParams(location.search).get('from') === 'room') { f.setShot('descend'); setTimeout(() => DASH.syncCamera(true), 2600); }
+DASH.onFactory && DASH.onFactory(f);
+</script>
+</body>
+</html>

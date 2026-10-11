@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Factory 3D</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<style>
+html,body{margin:0;height:100%;background:#fff;font-family:Geist,system-ui,sans-serif}
+#world{position:fixed;inset:0}
+.bar{position:fixed;left:24px;bottom:24px;display:flex;gap:2px;background:rgba(255,255,255,.88);backdrop-filter:blur(12px);border:1px solid #E7E7E9;border-radius:6px;padding:4px}
+.bar button{font:500 12px Geist Mono,monospace;border:0;background:none;padding:8px 12px;border-radius:4px;cursor:pointer;color:#0B0B0C}
+.bar button.on{background:#0B0B0C;color:#fff}
+</style></head><body>
+<div id="world"></div>
+<div class="bar" id="bar">
+  <button data-s="overview" class="on">01 overview</button><button data-s="descend">02 descend</button><button data-s="sensors">03 sensors</button><button data-s="monitor">04 monitor</button>
+</div>
+<script type="module">
+import { createFactory } from './factory3d.js';
+const f = window.FACTORY = createFactory(document.getElementById('world'));
+document.getElementById('bar').onclick = e => { const s = e.target.dataset.s; if (!s) return; f.setShot(s);
+  document.querySelectorAll('.bar button').forEach(b => b.classList.toggle('on', b === e.target)); };
+</script>
+</body></html>

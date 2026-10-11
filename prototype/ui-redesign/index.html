@@ -1,0 +1,1467 @@
+<!doctype html>
+<!--
+  MongoMation UI redesign · v2 design system · THROWAWAY CLICKABLE PROTOTYPE (mock data only, calls no APIs).
+  Production UI lives in WSL: /home/zubair/mongomation/apps/web (Modelence + React + Tailwind). Nothing there was edited.
+
+  COVERAGE MAP  (old single-page dashboard element -> new page)  [also: "Coverage" in the footer]
+  HeaderBar.tsx
+    brand + tagline ............................................... header (tagline replaced by terse product line)
+    Atlas / Worker / Rig lamps (with tooltips) .................... header status strip (all pages) -> click opens 04 Monitor / Health
+    Sign in / Sign out + handle ................................... header
+  DashboardPage.tsx
+    DisconnectedNotice / ServerUnreachable ........................ global notice line under the rail
+    footer "values read from MongoDB Atlas (db)" .................. footer
+  SpecConsole.tsx
+    spec textarea + char counter .................................. 01 Spec (document editor, line gutter, mono counter)
+    "Load selected project's spec" ................................ 01 Spec editor toolbar
+    "Apply as spec change to <id>" + spec-change status ........... 01 Spec editor toolbar
+    Factory I/O scene select (UNVERIFIED disabled, tags/faults) ... 01 Spec / Scene
+    Example select + Run Example (status, job, blockers) .......... 01 Spec / Examples list (hover: Load, Run)
+    Generate PLC (status, job id/age, blockers, sign-in note) ..... 01 Spec / Generate -> 02
+    Inject Fault & Improve Harness + Fault select ................. 03 Rig
+  ProjectPicker.tsx
+    project list (id, status, spec excerpt, scene, version, cost, created) ... 01 Spec / History table
+    Follow newest / Following newest .............................. 01 Spec / History header + rail context
+  (02-04 mappings are added as those pages are rebuilt)
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MongoMation Redesign</title>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================== tokens ============================== */
+:root{
+  color-scheme: light;
+  --ink:#0B0B0C; --ink-2:#3A3A40; --ink-3:#6B6B73; --ink-4:#9B9BA3;
+  --line:#E7E7E9; --line-2:#F2F2F3; --wash:#FAFAFA; --white:#FFFFFF;
+  --sig:#FF5A1F; --sig-soft:rgba(255,90,31,.14);
+  --ok:#0B0B0C; --warn:#D98200; --err:#E5372B; --idle:#B4B4BB; --run:#FF5A1F;
+  --sans:"Geist","IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+  --mono:"Geist Mono","IBM Plex Mono",ui-monospace,Consolas,monospace;
+  --ease:cubic-bezier(.2,.8,.2,1);
+  --r:6px;
+  --col:calc((min(100vw,1200px) - 64px - 11*24px)/12);
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--white)}
+body{color:var(--ink);font:400 14px/24px var(--sans);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+button,select,textarea,input{font:inherit;color:inherit}
+::selection{background:var(--sig-soft)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.c2{color:var(--ink-2)} .c3{color:var(--ink-3)} .c4{color:var(--ink-4)}
+
+/* ============================== layout ============================== */
+.wrap{max-width:1200px;margin:0 auto;padding:0 32px}
+.g12{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px}
+.s12{grid-column:span 12} .s8{grid-column:span 8} .s4{grid-column:span 4} .s6{grid-column:span 6} .s7{grid-column:span 7} .s5{grid-column:span 5} .s3{grid-column:span 3} .s9{grid-column:span 9}
+@media (max-width:960px){.s8,.s4,.s6,.s7,.s5,.s3,.s9{grid-column:span 12}}
+.hair{border:0;border-top:1px solid var(--line);margin:0}
+
+/* micro label */
+.lbl{font:500 11px/16px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.lbl .n{font-family:var(--mono);color:var(--ink-4);margin-right:8px;letter-spacing:0}
+
+/* ============================== header ============================== */
+header.top{border-bottom:1px solid var(--line);background:var(--white);position:sticky;top:0;z-index:30}
+.top .wrap{height:56px;display:flex;align-items:center;gap:32px}
+.mark{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
+.mark svg{display:block}
+.mark b{font-weight:600;font-size:15px;letter-spacing:-.01em}
+.mark span{font:400 12px var(--mono);color:var(--ink-4)}
+.status{margin-left:auto;display:flex;align-items:center;gap:24px}
+.sitem{display:flex;align-items:center;gap:8px;font:400 12px/16px var(--mono);color:var(--ink-2);cursor:pointer;background:none;border:0;padding:0;position:relative}
+.sitem .k{color:var(--ink-4);text-transform:uppercase;letter-spacing:.06em;font-size:11px}
+.sitem[data-tip]:hover::after{content:attr(data-tip);position:absolute;top:28px;right:0;white-space:nowrap;background:var(--ink);color:#fff;font:400 11px/16px var(--mono);padding:6px 8px;border-radius:4px;z-index:40}
+.who{display:flex;align-items:center;gap:12px;font:400 12px var(--mono);color:var(--ink-3);padding-left:24px;border-left:1px solid var(--line);height:24px}
+
+/* status dot + mono text (no pills) */
+.dot{width:6px;height:6px;border-radius:50%;background:var(--idle);flex:none;display:inline-block}
+.dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.err{background:var(--err)} .dot.run{background:var(--run)}
+.dot.live{animation:breathe 2.4s var(--ease) infinite}
+@keyframes breathe{0%,100%{box-shadow:0 0 0 0 currentColor;opacity:1}50%{opacity:.45}}
+ .dot.run.live{animation:breathe-run 1.6s var(--ease) infinite}
+@keyframes breathe-run{0%,100%{box-shadow:0 0 0 0 rgba(255,90,31,.35)}50%{box-shadow:0 0 0 4px rgba(255,90,31,0)}}
+.st{display:inline-flex;align-items:center;gap:8px;font:400 12px/16px var(--mono);color:var(--ink-2);white-space:nowrap}
+
+/* ============================== rail stepper ============================== */
+.rail{border-bottom:1px solid var(--line)}
+.rail .wrap{display:flex;align-items:stretch;gap:0;position:relative;height:48px}
+.rail-steps{display:grid;grid-template-columns:repeat(4,1fr);flex:1;position:relative;max-width:720px}
+.rstep{display:flex;align-items:center;gap:10px;background:none;border:0;padding:0;cursor:pointer;color:var(--ink-4);font:500 13px var(--sans);text-align:left;transition:color .2s var(--ease)}
+.rstep .n{font:400 12px var(--mono);color:var(--ink-4);transition:color .2s var(--ease)}
+.rstep:hover{color:var(--ink-2)}
+.rstep.on{color:var(--ink)} .rstep.on .n{color:var(--sig)}
+.rstep.done{color:var(--ink-2)}
+.rail-track{position:absolute;left:0;right:0;bottom:-1px;height:1px;background:transparent}
+.rail-prog{position:absolute;bottom:-1px;left:0;height:2px;background:var(--sig);transition:width .4s var(--ease),transform .4s var(--ease);width:25%}
+.ctx{margin-left:auto;display:flex;align-items:center;gap:16px;font:400 12px var(--mono);color:var(--ink-3)}
+.ctx select{border:0;background:none;font:400 12px var(--mono);color:var(--ink);cursor:pointer;padding:0 2px}
+.notice{border-bottom:1px solid var(--line);background:#FFF6F3}
+.notice .wrap{padding-top:10px;padding-bottom:10px;display:flex;gap:12px;align-items:center;font:400 12px/16px var(--mono);color:var(--ink-2)}
+
+/* ============================== buttons ============================== */
+.btn{height:40px;display:inline-flex;align-items:center;gap:10px;padding:0 20px;border-radius:var(--r);border:1px solid var(--ink);background:var(--ink);color:#fff;font:500 14px var(--sans);cursor:pointer;
+  transition:transform .12s var(--ease),box-shadow .2s var(--ease),background .2s var(--ease);outline:none}
+.btn:hover{background:#26262A}
+.btn:active{transform:scale(.98)}
+.btn:focus-visible,.tbtn:focus-visible,select:focus-visible,.rstep:focus-visible{box-shadow:0 0 0 2px #fff,0 0 0 4px var(--sig);outline:none}
+.btn:disabled{background:var(--line);border-color:var(--line);color:var(--ink-4);cursor:not-allowed;transform:none}
+.btn.ghost{background:var(--white);color:var(--ink);border-color:var(--line)}
+.btn.ghost:hover{border-color:var(--ink-4)}
+.btn.sm{height:32px;padding:0 12px;font-size:13px}
+.btn svg{width:16px;height:16px}
+.tbtn{position:relative;background:none;border:0;padding:4px 0;cursor:pointer;font:500 13px/16px var(--sans);color:var(--ink);display:inline-flex;align-items:center;gap:6px;border-radius:2px;transition:color .2s var(--ease)}
+.tbtn::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:currentColor;transform:scaleX(0);transform-origin:left;transition:transform .25s var(--ease)}
+.tbtn:hover::after{transform:scaleX(1)}
+.tbtn:active{transform:scale(.98)}
+.tbtn:disabled{color:var(--ink-4);cursor:not-allowed}.tbtn:disabled::after{display:none}
+.tbtn.sig{color:var(--sig)}
+.tbtn svg{width:14px;height:14px}
+svg.i{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+
+/* ============================== page frame ============================== */
+main{padding:48px 0 96px}
+.page{display:none}
+.page.on{display:block}
+.phead{margin-bottom:40px}
+.phead .lbl{margin-bottom:16px;display:block}
+.phead h1{font:500 48px/56px var(--sans);letter-spacing:-.02em;margin:0}
+.phead p{margin:8px 0 0;color:var(--ink-3);font-size:15px}
+.sec{padding-top:16px;border-top:1px solid var(--line)}
+.sec-h{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:16px;min-height:24px}
+.pager{display:flex;justify-content:space-between;align-items:center;margin-top:64px;padding-top:24px;border-top:1px solid var(--line)}
+
+/* ============================== editor ============================== */
+.editor{border-top:1px solid var(--ink)}
+.ed-bar{display:flex;align-items:center;gap:24px;height:48px;border-bottom:1px solid var(--line)}
+.ed-bar .lbl{margin-right:auto}
+.ed-body{position:relative;display:grid;grid-template-columns:48px 1fr;min-height:280px}
+.ed-gutter{font:400 12px/28px var(--mono);color:var(--ink-4);text-align:right;padding:16px 16px 16px 0;border-right:1px solid var(--line-2);user-select:none}
+.ed-gutter div{transition:color .2s}
+.ed-gutter div.cur{color:var(--sig)}
+.ed-area{position:relative}
+.ed-area textarea{display:block;width:100%;min-height:280px;border:0;resize:vertical;outline:none;padding:16px 0 16px 16px;font:400 16px/28px var(--sans);color:var(--ink);background:transparent}
+.ed-area textarea::placeholder{color:var(--ink-4)}
+.ed-mirror{position:absolute;visibility:hidden;left:0;right:0;top:0;padding:16px 0 16px 16px;font:400 16px/28px var(--sans);white-space:pre-wrap;word-wrap:break-word;pointer-events:none}
+.ed-foot{display:flex;align-items:center;gap:24px;height:40px;border-top:1px solid var(--line);font:400 12px var(--mono);color:var(--ink-3)}
+.counter{margin-left:auto;display:inline-flex;gap:0}
+.counter .d{display:inline-block;transition:transform .15s var(--ease)}
+.counter .d.tick{transform:translateY(-2px)}
+.counter.over{color:var(--err)}
+
+/* fields */
+.field{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));column-gap:24px;align-items:baseline;padding:16px 0;border-bottom:1px solid var(--line)}
+.field>.lbl{grid-column:span 2}
+.field>.fv{grid-column:span 6}
+select.sel{appearance:none;-webkit-appearance:none;border:0;border-bottom:1px solid var(--ink-4);background:transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5l3 3 3-3' fill='none' stroke='%230B0B0C' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 0 center;padding:4px 20px 4px 0;font:500 15px var(--sans);cursor:pointer;border-radius:0;transition:border-color .2s}
+select.sel:hover{border-bottom-color:var(--ink)}
+.meta{font:400 12px/20px var(--mono);color:var(--ink-3);margin-top:4px}
+
+/* generate */
+.gen{display:flex;align-items:center;gap:24px;padding:24px 0}
+.gen-wrap{position:relative;width:180px;height:40px}
+.gen-wrap .btn{width:100%;justify-content:space-between}
+.prog{position:absolute;inset:0;border-radius:var(--r);background:var(--line-2);overflow:hidden;opacity:0;pointer-events:none}
+.prog i{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--sig)}
+.prog span{position:absolute;inset:0;display:flex;align-items:center;padding:0 16px;font:500 12px var(--mono);color:var(--ink);mix-blend-mode:multiply}
+.why{font:400 12px/16px var(--mono);color:var(--warn)}
+
+/* examples list */
+.xlist{list-style:none;margin:0;padding:0;border-top:1px solid var(--ink)}
+.xitem{display:grid;grid-template-columns:32px 1fr;column-gap:8px;padding:16px 0;border-bottom:1px solid var(--line);position:relative}
+.xitem .n{font:400 12px/20px var(--mono);color:var(--ink-4)}
+.xitem h3{margin:0;font:500 14px/20px var(--sans)}
+.xitem .meta{margin-top:4px}
+.xitem .acts{display:flex;gap:16px;margin-top:8px;opacity:0;transform:translateY(-4px);transition:opacity .2s var(--ease),transform .2s var(--ease)}
+.xitem:hover .acts,.xitem:focus-within .acts{opacity:1;transform:none}
+.xitem:hover .n{color:var(--sig)}
+@media (hover:none){.xitem .acts{opacity:1;transform:none}}
+
+/* history table */
+table.t{width:100%;border-collapse:collapse;font-size:13px}
+.t th{font:500 11px/16px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);text-align:left;padding:0 16px 8px 0;border-bottom:1px solid var(--ink)}
+.t td{padding:12px 16px 12px 0;border-bottom:1px solid var(--line);vertical-align:baseline}
+.t td.m{font:400 12px var(--mono);color:var(--ink-2);white-space:nowrap}
+.t td.r,.t th.r{text-align:right;padding-right:0}
+.t tbody tr{cursor:pointer;transition:background .15s var(--ease)}
+.t tbody tr:hover{background:var(--wash)}
+.t tbody tr.sel td:first-child{box-shadow:inset 2px 0 0 var(--sig);padding-left:12px}
+.t td:first-child,.t th:first-child{padding-left:12px}
+.t .ex{color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+
+/* skeleton */
+.sk{display:block;height:12px;border-radius:2px;background:linear-gradient(90deg,var(--line-2) 0%,#E9E9EC 40%,var(--line-2) 80%);background-size:200% 100%;animation:shimmer 1.2s linear infinite}
+@keyframes shimmer{from{background-position:200% 0}to{background-position:-200% 0}}
+
+/* stub */
+.stub{border-top:1px solid var(--ink);padding:24px 0;color:var(--ink-3);font:400 13px var(--mono)}
+
+/* footer + coverage */
+footer{border-top:1px solid var(--line)}
+footer .wrap{display:flex;justify-content:space-between;gap:24px;height:56px;align-items:center;font:400 12px var(--mono);color:var(--ink-4)}
+#coverage{display:none;padding-bottom:64px}
+#coverage.on{display:block}
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,8px);background:var(--ink);color:#fff;font:400 12px/16px var(--mono);padding:10px 14px;border-radius:var(--r);opacity:0;transition:opacity .2s var(--ease),transform .2s var(--ease);pointer-events:none;z-index:60}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+
+
+/* ============================== 02 generate ============================== */
+.sm{font-size:12px}
+.sec.gap{margin-top:48px}
+.ledger{list-style:none;margin:0;padding:0;position:relative;border-top:1px solid var(--ink)}
+.ledger::before{content:"";position:absolute;left:0;top:0;width:2px;height:var(--fill,0%);background:var(--sig);transition:height .3s var(--ease)}
+.lrow{display:grid;grid-template-columns:32px minmax(0,1fr) 88px 64px 64px;column-gap:16px;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--line);opacity:.35;transition:opacity .25s var(--ease)}
+.lrow.shown{opacity:1}
+.lrow .n{font:400 12px var(--mono);color:var(--ink-4);text-align:center;position:relative;z-index:1}
+.lrow.done .n{color:var(--ink-2)} .lrow.running .n{color:var(--sig)}
+.lrow .name{font-weight:500}
+.lrow .sub{display:block;font:400 11px/16px var(--mono);color:var(--ink-4);margin-top:2px}
+.lrow .err{display:block;font:400 12px/16px var(--mono);color:var(--err);margin-top:4px}
+.lrow .m{font:400 12px var(--mono);color:var(--ink-3);text-align:right}
+.toolbar{display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+.seg{display:inline-flex;gap:16px;margin-left:auto}
+.seg button{background:none;border:0;padding:4px 0;font:500 13px var(--sans);color:var(--ink-4);cursor:pointer;position:relative}
+.seg button::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--ink);transform:scaleX(0);transform-origin:left;transition:transform .25s var(--ease)}
+.seg button.on{color:var(--ink)} .seg button.on::after{transform:scaleX(1)}
+.seg button:hover{color:var(--ink-2)}
+.code{height:520px;overflow:auto;border-top:1px solid var(--ink);border-bottom:1px solid var(--line);background:var(--wash);font:400 12px/20px var(--mono);padding:8px 0}
+.code .ln{display:flex}
+.code .ln:hover{background:#F3F3F5}
+.code .no{width:48px;flex:none;text-align:right;padding-right:16px;color:var(--ink-4);user-select:none;position:sticky;left:0;background:inherit}
+.code code{white-space:pre-wrap;overflow-wrap:anywhere;padding-right:16px;color:var(--ink);font:inherit}
+.code .add{background:#F1F1F3}.code .del{background:#FDF0EE}
+.code .ln.new{animation:lnin .18s var(--ease)}
+.code .caret{display:inline-block;width:7px;height:14px;background:var(--sig);vertical-align:-2px;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+@keyframes lnin{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
+.k{color:var(--ink);font-weight:500}.ty{color:#5B5B63}.cm{color:var(--ink-4)}.ad{color:#C2410C}.nu{color:#6D4AFF}
+details.row1{border-bottom:1px solid var(--line)}
+details.row1:first-of-type{border-top:1px solid var(--ink)}
+details.row1 summary{display:grid;grid-template-columns:16px minmax(0,1fr) 96px 56px 64px;column-gap:16px;align-items:center;padding:10px 0;cursor:pointer;list-style:none}
+details.row1 summary::-webkit-details-marker{display:none}
+details.row1 summary .m{font:400 12px var(--mono);color:var(--ink-3);text-align:right}
+.chev{width:12px;height:12px;transition:transform .2s var(--ease);color:var(--ink-4)}
+details.row1[open] .chev{transform:rotate(90deg)}
+details.row1 pre{margin:0 0 12px 32px;font:400 12px/20px var(--mono);color:var(--ink-2);white-space:pre-wrap}
+.nums{display:grid;grid-template-columns:repeat(4,1fr);column-gap:24px;border-top:1px solid var(--ink);padding:16px 0 24px}
+.nums b{display:block;font-size:32px;line-height:40px;font-weight:500;letter-spacing:-.02em}
+.tests{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.tests li{border-bottom:1px solid var(--line)}
+.tests .th{display:grid;grid-template-columns:16px minmax(0,1fr) 56px 72px;column-gap:16px;align-items:baseline;padding:10px 0;cursor:pointer;background:none;border:0;width:100%;text-align:left;font:inherit;color:inherit}
+.tests .th .meta{display:block;margin:2px 0 0}
+.tests .th .m{font:400 12px var(--mono);color:var(--ink-3);text-align:right}
+.tests li.hid .th{cursor:default;color:var(--ink-3)}
+.tests .chev{align-self:center}
+.tests li.open .chev{transform:rotate(90deg)}
+.tl{padding:4px 0 16px 32px}
+.tl .row{display:grid;grid-template-columns:120px 1fr;align-items:center;column-gap:16px}
+.tl .row span{font:400 12px var(--mono);color:var(--ink-2)}
+.tl svg{width:100%;height:24px;display:block}
+.tl path.trace{stroke-dasharray:1200;stroke-dashoffset:1200;animation:draw .6s var(--ease) forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+.log{list-style:none;margin:0;padding:0;border-top:1px solid var(--ink);max-height:320px;overflow:auto;font:400 12px/20px var(--mono)}
+.log li{display:grid;grid-template-columns:72px 56px minmax(0,1fr);column-gap:16px;padding:6px 0;border-bottom:1px solid var(--line-2)}
+.log .lv{text-transform:uppercase;color:var(--ink-4)} .log .lv.warn{color:var(--warn)} .log .lv.error{color:var(--err)}
+.log .sg{color:var(--ink-3)}
+
+/* ============================== 03 rig ============================== */
+body[data-route=rig] main{padding:0}
+body[data-route=rig] footer,body[data-route=rig] #coverage{display:none}
+body[data-route=rig] #page-rig .glass{background:none;border:0;padding:0;backdrop-filter:none;-webkit-backdrop-filter:none;max-width:none}
+.rig-empty{position:fixed;left:50%;top:42%;transform:translate(-50%,-50%);text-align:center;color:var(--ink-3);z-index:1}
+.rig-empty p{margin:8px 0 0;font:400 12px var(--mono)}
+.strip{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);width:min(1200px,calc(100vw - 48px));z-index:5;
+  background:rgba(255,255,255,.88);backdrop-filter:blur(18px) saturate(1.1);-webkit-backdrop-filter:blur(18px) saturate(1.1);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 8px 32px -16px rgba(11,11,12,.18)}
+.strip-h{display:flex;align-items:center;gap:24px;height:56px;padding:0 24px;border-bottom:1px solid var(--line)}
+.strip-h .lbl{margin:0}
+.strip-title{font:500 15px var(--sans);letter-spacing:-.01em}
+.strip-h .sp{flex:1}
+.strip-b,.strip-d{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) minmax(0,1.3fr) minmax(0,.9fr);column-gap:0}
+.strip-d{border-top:1px solid var(--line)}
+.strip-d[hidden],[hidden]{display:none!important}
+.zone{padding:16px 24px;border-left:1px solid var(--line);min-width:0}
+.zone:first-child{border-left:0}
+.zone>.lbl{display:block;margin-bottom:12px}
+.pbtns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pbtn{height:32px;padding:0 12px;border:1px solid var(--line);background:#fff;border-radius:var(--r);font:500 13px var(--sans);cursor:pointer;transition:transform .12s var(--ease),border-color .2s var(--ease)}
+.pbtn:hover{border-color:var(--ink-4)}
+.pbtn:active{transform:scale(.97)}
+.pbtn.go{border-color:var(--ink);background:var(--ink);color:#fff}
+.pbtn.estop{border-color:var(--err);color:var(--err)}
+.pbtn.estop[aria-pressed=true]{background:var(--err);color:#fff}
+.auto{display:inline-flex;gap:6px;align-items:center;font:400 12px var(--mono);color:var(--ink-2);margin-left:4px}
+.auto input{accent-color:var(--sig)}
+.lamps{display:flex;gap:16px;align-items:center;margin-top:12px;font:400 12px var(--mono);color:var(--ink-3)}
+.lamp{display:inline-flex;align-items:center;gap:6px}
+.lamp i{width:8px;height:8px;border-radius:50%;background:var(--line);box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);transition:background .2s,box-shadow .2s}
+.lamp.on[data-tag="Start light"] i{background:#17A34A;box-shadow:0 0 0 3px rgba(23,163,74,.15)}
+.lamp.on[data-tag="Reset light"] i{background:#F2B705;box-shadow:0 0 0 3px rgba(242,183,5,.18)}
+.lamp.on[data-tag="Stop light"] i{background:var(--err);box-shadow:0 0 0 3px rgba(229,55,43,.15)}
+.kv2{display:grid;grid-template-columns:88px minmax(0,1fr);row-gap:6px;margin:0;font-size:13px}
+.kv2 dt{color:var(--ink-3)} .kv2 dd{margin:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.btn.hz{white-space:nowrap;background:#fff;color:var(--ink);border-color:var(--ink)}
+.btn.hz::before{content:"";width:8px;height:16px;background:repeating-linear-gradient(-45deg,var(--sig) 0 3px,var(--ink) 3px 6px);border-radius:1px}
+.btn.hz:hover{background:var(--wash)}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;font:400 12px var(--mono);border:1px solid var(--line);border-radius:4px;padding:2px 8px;color:var(--ink-2)}
+.chip.forced{border-color:var(--sig);color:var(--ink)}
+.chip.forced::before{content:"";width:6px;height:6px;background:var(--sig);border-radius:1px}
+.flist{list-style:none;margin:0;padding:0;font:400 12px/20px var(--mono);color:var(--ink-2);max-height:120px;overflow:auto}
+.flist li{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:16px;padding:4px 0;border-bottom:1px solid var(--line-2)}
+.sel-name{font:500 15px var(--sans);color:var(--ink)}
+
+/* ============================== 04 monitor ============================== */
+body[data-route=monitor] .glass{max-width:840px}
+.tabs{display:flex;gap:32px;border-bottom:1px solid var(--line);position:relative}
+.tabs button{background:none;border:0;padding:0 0 12px;font:500 14px var(--sans);color:var(--ink-4);cursor:pointer;transition:color .2s var(--ease)}
+.tabs button:hover{color:var(--ink-2)}
+.tabs button.on{color:var(--ink)}
+.tab-ink{position:absolute;bottom:-1px;height:2px;background:var(--sig);left:0;width:0;transition:left .3s var(--ease),width .3s var(--ease)}
+.iofilter{display:flex;gap:16px;margin-bottom:16px}
+.iofilter button{background:none;border:0;padding:0;font:400 12px var(--mono);color:var(--ink-4);cursor:pointer}
+.iofilter button.on{color:var(--ink);text-decoration:underline;text-underline-offset:4px}
+.t.io td{padding-top:8px;padding-bottom:8px}
+.t.io tr.sel td:first-child{box-shadow:inset 2px 0 0 var(--sig);padding-left:12px}
+.t.io .val{display:inline-flex;align-items:center;gap:8px;font:400 12px var(--mono)}
+.t.io .val.flip{animation:flip .4s var(--ease)}
+@keyframes flip{from{background:var(--sig-soft)}to{background:transparent}}
+.t.io .nc{font:400 11px var(--mono);color:var(--ink-4);margin-left:6px}
+.t.io .fz{font:400 11px var(--mono);color:var(--sig);margin-left:6px}
+.hgrid{display:grid;grid-template-columns:repeat(3,1fr);column-gap:24px;margin-top:24px;border-top:1px solid var(--ink);padding-top:16px}
+.big{display:flex;align-items:center;gap:10px;font:500 24px/32px var(--sans);letter-spacing:-.01em;margin:8px 0 4px}
+.big .dot{width:8px;height:8px}
+.kv3{display:grid;grid-template-columns:136px minmax(0,1fr);margin:0;border-top:1px solid var(--ink)}
+.kv3 dt,.kv3 dd{padding:8px 0;border-bottom:1px solid var(--line);margin:0}
+.kv3 dt{color:var(--ink-3);font-size:13px}
+.ck{list-style:none;margin:0;padding:0;border-top:1px solid var(--ink)}
+.ck li{display:grid;grid-template-columns:minmax(0,1fr) 96px 120px;column-gap:16px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px}
+.ck li .m{font:400 12px var(--mono);color:var(--ink-3);text-align:right}
+.rsi-top{display:grid;grid-template-columns:repeat(3,1fr);column-gap:24px;margin-top:24px;border-top:1px solid var(--ink);padding-top:16px}
+.hv{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+.hv>span:first-child{font:500 40px/48px var(--sans);letter-spacing:-.02em}
+.hv>.mono:first-child{font-family:var(--mono)}
+.chart{width:100%;height:auto;display:block;border-top:1px solid var(--ink);overflow:visible}
+.chart .line{fill:none;stroke:var(--ink);stroke-width:1.5}
+.chart .grid line{stroke:var(--line);vector-effect:non-scaling-stroke}
+.chart text{font:400 11px var(--mono);fill:var(--ink-4)}
+.legend{display:flex;gap:24px;font-size:12px;color:var(--ink-3);margin-top:8px}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;vertical-align:0}
+.legend .k1{background:var(--ink)} .legend .k2{border:1.5px solid var(--err);width:6px;height:6px} .legend .k3{background:var(--sig)}
+.rules{margin:0 0 12px;padding-left:20px;font-size:13px;line-height:24px;color:var(--ink-2)}
+.prov{display:flex;align-items:center;gap:10px;padding:12px 16px;border:1px solid var(--line);border-left:2px solid var(--sig);border-radius:0 var(--r) var(--r) 0;font-size:13px}
+.prov b{font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:12px}
+.prov span:last-child{color:var(--ink-3);margin-left:auto;font:400 12px var(--mono)}
+.pline{display:flex;gap:16px;align-items:center;margin-top:16px}
+.diff{margin:8px 0 16px;padding:8px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--wash);font:400 12px/20px var(--mono);white-space:pre-wrap}
+.diff .a{color:var(--ink);background:#F1F1F3;display:block}.diff .d{color:var(--err);display:block}
+.guard{display:flex;gap:16px;align-items:baseline}
+.hist{list-style:none;margin:0;padding:0;border-top:1px solid var(--ink)}
+.hist li{display:grid;grid-template-columns:48px minmax(0,1fr) 112px;column-gap:16px;padding:10px 0;border-bottom:1px solid var(--line);align-items:baseline}
+.hist .v{font:500 13px var(--mono)}
+.hist .r1{font-size:13px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t td.best{font-weight:600;color:var(--ink)}
+.t td.best::after{content:"";display:inline-block;width:5px;height:5px;background:var(--sig);border-radius:50%;margin-left:6px;vertical-align:2px}
+.t td.up{color:var(--ink)} .t td.down{color:var(--err)}
+
+/* ============================== 3D scene layer + glass ============================== */
+#world{position:fixed;inset:0;z-index:0;background:linear-gradient(180deg,#F4F7FA 0%,#FFFFFF 70%)}
+#world canvas{display:block;width:100%!important;height:100%!important}
+#world.fallback{background-color:#FBFBFC;background-image:linear-gradient(var(--line-2) 1px,transparent 1px),linear-gradient(90deg,var(--line-2) 1px,transparent 1px);background-size:32px 32px}
+header.top,.rail,.notice,footer,#coverage{position:relative;z-index:2;background:rgba(255,255,255,.92);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+header.top{position:sticky}
+main{position:relative;z-index:1}
+.glass{background:rgba(255,255,255,.86);backdrop-filter:blur(18px) saturate(1.1);-webkit-backdrop-filter:blur(18px) saturate(1.1);border:1px solid var(--line);border-radius:var(--r);padding:40px;transition:max-width .4s var(--ease)}
+
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}
+
+
+/* ============================== responsive (v2.1) ============================== */
+html,body{overflow-x:hidden}
+.glass{width:100%}
+body[data-route=spec] .glass{max-width:600px}
+body[data-route=generate] .glass{max-width:760px}
+.rail-steps{min-width:0}
+.rstep{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t{table-layout:fixed}
+.t td{overflow:hidden;text-overflow:ellipsis}
+.sitem{white-space:nowrap}
+/* <1100: panel full width, 3D becomes a band above the content */
+@media (max-width:1099px){
+  #world{position:relative;inset:auto;height:260px;border-bottom:1px solid var(--line);z-index:0}
+  body[data-route] .glass{max-width:100%}
+  .glass{padding:32px}
+  main{padding-top:32px}
+  .ctx .tbtn{display:none}
+  .status{gap:16px}
+  .who{padding-left:16px}
+}
+@media (max-width:900px){
+  .ctx{display:none}
+  .rail-steps{max-width:none}
+  .mark span{display:none}
+  .sitem:not(:first-child) .v{display:none}
+}
+/* <720: single column */
+@media (max-width:719px){
+  .wrap{padding:0 16px}
+  #world{height:180px}
+  .glass{padding:20px 16px;border-left:0;border-right:0;border-radius:0}
+  main.wrap{padding-left:0;padding-right:0}
+  .top .wrap{gap:12px}
+  .status{gap:12px}
+  .sitem .k,.sitem .v{display:none}
+  .who #handle{display:none}
+  .who{padding-left:12px}
+  .rstep{font-size:12px;gap:6px}
+  .phead{margin-bottom:24px}
+  .phead h1{font-size:32px;line-height:40px}
+  .field{grid-template-columns:1fr;row-gap:8px}
+  .field>.lbl,.field>.fv{grid-column:1/-1}
+  .ed-bar{gap:16px;flex-wrap:wrap;height:auto;padding:8px 0}
+  .ed-body{grid-template-columns:32px 1fr}
+  .ed-gutter{padding-right:8px}
+  .gen{flex-wrap:wrap;gap:16px}
+  .t .hide-sm{display:none}
+  .pager{flex-wrap:wrap;gap:16px}
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-arrow" viewBox="0 0 16 16"><path d="M3 8h10M9 4l4 4-4 4"/></symbol>
+  <symbol id="i-back" viewBox="0 0 16 16"><path d="M13 8H3M7 4L3 8l4 4"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path d="M8 2v9M4 7l4 4 4-4M3 14h10"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 16 16"><path d="M9 3h4v4M13 3L7 9M11 9v4H3V5h4"/></symbol>
+  <symbol id="i-play" viewBox="0 0 16 16"><path d="M5 3.5v9l7-4.5z"/></symbol>
+  <symbol id="i-load" viewBox="0 0 16 16"><path d="M8 3v7M5 7l3 3 3-3M3 13h10"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 16 16"><path d="M5 4L2 7l3 3M2 7h8a4 4 0 010 8H8"/></symbol>
+</svg>
+
+<!-- ============================== HEADER ============================== -->
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="#spec" onclick="go('spec');return false;">
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x=".75" y=".75" width="18.5" height="18.5" rx="3" fill="none" stroke="#0B0B0C" stroke-width="1.5"/><path d="M5 14V6l5 5 5-5v8" fill="none" stroke="#0B0B0C" stroke-width="1.5"/><circle cx="15" cy="14" r="1.6" fill="#FF5A1F"/></svg>
+      <b>MongoMation</b><span>spec → tested PLC</span>
+    </a>
+    <div class="status">
+      <button class="sitem" data-tip="MongoDB Atlas · database mongomation" onclick="go('monitor/health')"><span class="dot ok live"></span><span class="k">Atlas</span><span class="v">mongomation</span></button>
+      <button class="sitem" data-tip="worker-aws-1 · ip-10-0-1-23 · pid 4120 · job 6708f2c1" onclick="go('monitor/health')"><span class="dot ok live"></span><span class="k">Worker</span><span class="v" id="hbAge">4s</span></button>
+      <button class="sitem" data-tip="rig-aws-1 · scene sorting-by-height-basic" onclick="go('monitor/health')"><span class="dot ok live"></span><span class="k">Rig</span><span class="v">FIO up · PLC run · 6s</span></button>
+      <div class="who"><span id="handle">zubair</span><button class="tbtn" id="signBtn" onclick="toggleSignIn()">Sign out</button></div>
+    </div>
+  </div>
+</header>
+
+<!-- ============================== RAIL ============================== -->
+<nav class="rail" aria-label="Workflow">
+  <div class="wrap">
+    <div class="rail-steps" id="rail">
+      <button class="rstep" data-route="spec"><span class="n">01</span>Spec</button>
+      <button class="rstep" data-route="generate"><span class="n">02</span>Generate</button>
+      <button class="rstep" data-route="rig"><span class="n">03</span>Rig</button>
+      <button class="rstep" data-route="monitor"><span class="n">04</span>Monitor</button>
+      <span class="rail-prog" id="railProg"></span>
+    </div>
+    <div class="ctx">
+      <span>project</span>
+      <select id="projSwitch" aria-label="Selected project"></select>
+      <button class="tbtn" id="followTop" onclick="followNewest()">follow newest</button>
+    </div>
+  </div>
+</nav>
+
+<div class="notice" id="notice" hidden><div class="wrap"><span class="dot err"></span><span>Atlas disconnected · MongoServerSelectionError: connection timed out · showing no data until the connection works</span></div></div>
+
+<div id="world" aria-hidden="true"></div>
+<main class="wrap">
+
+<!-- ============================== 01 SPEC ============================== -->
+<section class="page" id="page-spec"><div class="glass">
+  <div class="phead" data-st>
+    <span class="lbl"><span class="n">01</span>Spec</span>
+    <h1>Describe the machine.</h1>
+    <p>Plain language. Inputs, outputs, interlocks, timeouts, resets.</p>
+  </div>
+
+  <div class="g12">
+    <!-- editor -->
+    <div class="s12">
+      <div class="editor" data-st>
+        <div class="ed-bar">
+          <span class="lbl">Spec</span>
+          <button class="tbtn" id="loadProjSpec" onclick="loadProjectSpec()"><svg class="i"><use href="#i-undo"/></svg>Load project spec</button>
+          <button class="tbtn" id="applySpec" onclick="applySpecChange()">Apply as change to <span class="mono" id="applyTarget">6708f2c1</span></button>
+        </div>
+        <div class="ed-body">
+          <div class="ed-gutter mono" id="gutter"><div>1</div></div>
+          <div class="ed-area">
+            <div class="ed-mirror" id="mirror" aria-hidden="true"></div>
+            <textarea id="spec" spellcheck="false" placeholder="Pressing Start runs the entry conveyor until Stop is pressed. Stop wins. Emergency stop halts everything…"></textarea>
+          </div>
+        </div>
+        <div class="ed-foot">
+          <span class="st"><span class="dot ok"></span>last spec change done · job 6708f1e0</span>
+          <span class="counter mono" id="counter" aria-live="polite"></span>
+        </div>
+      </div>
+
+      <div class="field" data-st>
+        <span class="lbl">Scene</span>
+        <div class="fv">
+          <select class="sel" id="scene" aria-label="Factory I/O scene">
+            <option value="sorting-by-height-basic">Sorting by Height (Basic)</option>
+            <option value="pick-and-place" disabled>Pick &amp; Place — unverified</option>
+          </select>
+          <div class="meta">sorting-by-height-basic · 24 tags · 4 faults · verified · unverified scenes cannot run</div>
+        </div>
+      </div>
+
+      <div class="gen" data-st>
+        <div class="gen-wrap">
+          <button class="btn" id="genBtn" onclick="generate()">Generate <svg class="i"><use href="#i-arrow"/></svg></button>
+          <div class="prog" id="genProg"><i></i><span>queued · job 6708fc33</span></div>
+        </div>
+        <div>
+          <span class="st"><span class="dot ok"></span>last run done · job 6708f2c1 · 12m ago</span>
+          <div class="why" id="genWhy"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- examples -->
+    <aside class="s12" style="margin-top:48px">
+      <div data-st>
+        <div class="sec-h" style="margin-bottom:8px"><span class="lbl">Examples</span><span class="mono c4" style="font-size:12px">02</span></div>
+        <ul class="xlist" id="xlist"></ul>
+        <div style="padding:16px 0">
+          <span class="st"><span class="dot run live"></span>example running · job 6708e9aa · 3m</span>
+          <div class="meta" style="margin-top:8px">Prewritten spec text only. Requirements, I/O, code and tests run live.</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- history -->
+  <div style="margin-top:64px" data-st>
+    <div class="sec-h">
+      <span class="lbl">History</span>
+      <span class="row" style="display:flex;gap:24px;align-items:baseline"><span class="mono c4" style="font-size:12px" id="projCount"></span><button class="tbtn" id="followBtn" onclick="followNewest()">Following newest</button></span>
+    </div>
+    <table class="t">
+      <thead><tr><th style="width:96px">Project</th><th style="width:104px">Status</th><th>Spec</th><th class="r" style="width:40px">Ver</th><th class="r hide-sm" style="width:56px">Cost</th><th class="r hide-sm" style="width:88px">Created</th></tr></thead>
+      <tbody id="projBody"></tbody>
+    </table>
+  </div>
+
+  <div class="pager">
+    <button class="tbtn" onclick="toggleNotice()">Simulate Atlas disconnect</button>
+    <button class="btn" onclick="go('generate')">Generate <svg class="i"><use href="#i-arrow"/></svg></button>
+  </div>
+</div></section>
+
+<!-- ============================== 02 GENERATE ============================== -->
+<section class="page" id="page-generate"><div class="glass">
+  <div class="phead" data-st>
+    <span class="lbl"><span class="n">02</span>Generate</span>
+    <h1>Engineering run.</h1>
+    <p>Pipeline, Structured Text, compile, tests.</p>
+    <div class="meta" style="margin-top:8px">project <span id="g-proj">6708f2c1</span> · harness v4 · 2 attempts</div>
+  </div>
+
+  <!-- pipeline ledger (old ExecutionPanel stage list) -->
+  <div class="sec" data-st>
+    <div class="sec-h"><span class="lbl">Pipeline</span><span class="st" id="g-status"><span class="dot run live"></span>verifying · <span id="g-done">0</span>/10 done</span></div>
+    <ol class="ledger" id="pipe"></ol>
+  </div>
+
+  <!-- program (old PlcProgram) -->
+  <div class="sec gap" data-st>
+    <div class="sec-h"><span class="lbl">Program · Structured Text</span><span class="mono c4 sm">03 versions</span></div>
+    <div class="toolbar">
+      <select class="sel" id="plcVer" aria-label="PLC version"><option value="3">v3 · repair · latest</option><option value="2">v2 · repair</option><option value="1">v1 · codegen</option></select>
+      <span class="mono c3 sm" id="verMeta">harness v4 · 11:07:42</span>
+      <span class="seg" role="group" aria-label="View"><button class="on" id="vSrc" onclick="setPlcMode('source')">Source</button><button id="vDiff" onclick="setPlcMode('diff')">Diff vs v2</button></span>
+      <button class="tbtn" onclick="toast('downloaded · plc-v3.st')"><svg class="i"><use href="#i-down"/></svg>.st</button>
+    </div>
+    <div class="meta" style="margin:8px 0 16px">source hash 9c41e07ab2d3</div>
+    <div class="code" id="plcCode"></div>
+  </div>
+
+  <!-- compile (old ResultsCard / Compilation) -->
+  <div class="sec gap" data-st>
+    <div class="sec-h"><span class="lbl">Compile</span><span class="mono c4 sm">for v3</span></div>
+    <details class="row1"><summary><svg class="i chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4"/></svg><span>Preflight · MatIEC iec2c</span><span class="m">matiec 1.0</span><span class="m">0.8 s</span><span class="st"><span class="dot ok"></span>ok</span></summary><pre>iec2c -f -l -p -r -R -a program.st
+POUS.c / Config0.c generated
+0 errors, 0 warnings</pre></details>
+    <details class="row1"><summary><svg class="i chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4"/></svg><span>OpenPLC compile</span><span class="m">openplc v4</span><span class="m">14.2 s</span><span class="st"><span class="dot ok"></span>ok</span></summary><pre>Compiling program.st ...
+Generating object files...
+Linking...
+Compilation finished successfully!</pre></details>
+  </div>
+
+  <!-- tests (old ResultsCard / Independent tests + TestTimeline) -->
+  <div class="sec gap" data-st>
+    <div class="sec-h"><span class="lbl">Independent tests</span><span class="st"><span class="dot ok"></span>run 6708f5d0 · done</span></div>
+    <div class="nums">
+      <div><b class="mono" data-count="6">0</b><span class="lbl">Passed</span></div>
+      <div><b class="mono" data-count="0">0</b><span class="lbl">Failed</span></div>
+      <div><b class="mono" data-count="0">0</b><span class="lbl">Blocked</span></div>
+      <div><b class="mono" data-count="8">0</b><span class="lbl">Results</span></div>
+    </div>
+    <ul class="tests" id="tests"></ul>
+    <div class="meta" style="margin-top:8px">Hidden regression tests show category and verdict only.</div>
+  </div>
+
+  <!-- verdicts -->
+  <div class="sec gap" data-st>
+    <div class="sec-h"><span class="lbl">Requirement verdicts</span><span class="mono c4 sm">final verification</span></div>
+    <table class="t"><thead><tr><th style="width:56px">Req</th><th>Requirement</th><th class="r" style="width:120px">Verdict</th></tr></thead><tbody id="verdicts"></tbody></table>
+  </div>
+
+  <!-- diagnosis -->
+  <div class="sec gap" data-st>
+    <div class="sec-h"><span class="lbl">Latest diagnosis</span><span class="mono c4 sm">trace 7f2a91c0</span></div>
+    <p style="margin:0 0 8px;max-width:64ch">v2 failed R4: the conveyor kept running 5.4 s past the jam timeout because the TON was reset in the same scan that latched the fault.</p>
+    <p class="mono" style="margin:0;font-size:12px;line-height:20px;color:var(--ink-2)">R4 · jam latch reset before evaluation → latch JamFault on TON.Q; reset only on Reset AND NOT Pallet_sensor</p>
+  </div>
+
+  <!-- event log (old ExecutionPanel EventLog) -->
+  <div class="sec gap" data-st>
+    <div class="sec-h"><span class="lbl">Event log · latest <span id="evCount"></span></span>
+      <span class="seg" role="group" aria-label="Filter events by level"><button class="on" data-lv="all">All</button><button data-lv="warn">Warn+</button><button data-lv="error">Errors</button></span>
+    </div>
+    <ol class="log" id="evlog"></ol>
+  </div>
+
+  <div class="pager"><button class="tbtn" onclick="go('spec')"><svg class="i"><use href="#i-back"/></svg>Spec</button><button class="btn" onclick="go('rig')">Rig <svg class="i"><use href="#i-arrow"/></svg></button></div>
+</div></section>
+
+<!-- ============================== 03 RIG ============================== -->
+<section class="page" id="page-rig"><div class="glass">
+  <div class="rig-empty" id="rigEmpty" hidden>
+    <span class="lbl">3D view unavailable</span>
+    <p>factory3d.js did not load. Serve over http://localhost:5178 so the scene can import.</p>
+  </div>
+
+  <div class="strip" data-st>
+    <div class="strip-h">
+      <span class="lbl"><span class="n">03</span>Rig</span>
+      <span class="strip-title">Sorting by Height (Basic)</span>
+      <span class="st"><span class="dot ok live"></span>live · <span id="rigAge">6</span>s</span>
+      <span class="st" id="simSt"><span class="dot run live"></span>running</span>
+      <span class="sp"></span>
+      <button class="tbtn" onclick="toast('opens rig_status.dcvUrl (Amazon DCV) in a new tab')"><svg class="i"><use href="#i-ext"/></svg>Live 3D view (DCV)</button>
+      <button class="tbtn" id="detailBtn" onclick="toggleRigDetail()" aria-expanded="false">Details</button>
+      <button class="tbtn" onclick="go('generate')"><svg class="i"><use href="#i-back"/></svg>Generate</button>
+      <button class="btn sm" onclick="go('monitor')">Monitor <svg class="i"><use href="#i-arrow"/></svg></button>
+    </div>
+
+    <div class="strip-b">
+      <!-- operator panel -->
+      <div class="zone">
+        <span class="lbl">Panel</span>
+        <div class="pbtns">
+          <button class="pbtn go" onclick="press('Start')">Start</button>
+          <button class="pbtn" onclick="press('Stop')">Stop</button>
+          <button class="pbtn" onclick="press('Reset')">Reset</button>
+          <button class="pbtn estop" id="estopBtn" onclick="press('Emergency stop')" aria-pressed="false">E-stop</button>
+          <label class="auto"><input type="checkbox" id="autoSel" checked onchange="SIM.auto=this.checked"> Auto</label>
+        </div>
+        <div class="lamps">
+          <span class="lamp" data-tag="Start light"><i></i>Start</span>
+          <span class="lamp" data-tag="Reset light"><i></i>Reset</span>
+          <span class="lamp" data-tag="Stop light"><i></i>Stop</span>
+          <span class="mono c3 sm" style="white-space:nowrap;margin-left:auto">counter <b class="mono" id="counterV" style="color:var(--ink)">0</b></span>
+        </div>
+      </div>
+
+      <!-- rig status (old SimulationPanel) -->
+      <div class="zone">
+        <span class="lbl">Rig · rig-aws-1</span>
+        <dl class="kv2">
+          <dt>Factory I/O</dt><dd><span class="st"><span class="dot ok"></span>reachable</span></dd>
+          <dt>OpenPLC</dt><dd><span class="st"><span class="dot ok"></span>reachable · <span id="plcRun">running</span></span></dd>
+          <dt>Checked</dt><dd class="mono">11:08:02 · 6s ago</dd>
+          <dt>Scene</dt><dd><span class="st"><span class="dot ok"></span>verified</span></dd>
+        </dl>
+      </div>
+
+      <!-- fault injection -->
+      <div class="zone">
+        <span class="lbl">Fault injection</span>
+        <select class="sel" id="faultSel" aria-label="Fault" style="width:100%"><option value="">Worker chooses from the scene</option></select>
+        <div style="display:flex;align-items:center;gap:16px;margin-top:12px">
+          <button class="btn sm hz" onclick="injectFault()">Inject fault &amp; improve harness</button>
+          <span class="st" id="faultChip"><span class="dot"></span>available</span>
+        </div>
+        <div class="meta" id="faultJob">no job yet</div>
+      </div>
+
+      <!-- selected signal -->
+      <div class="zone">
+        <span class="lbl">Signal</span>
+        <div id="selIO" class="sm c3">Click a tag in 3D or in Monitor / IO.</div>
+      </div>
+    </div>
+
+    <div class="strip-d" id="rigDetail" hidden>
+      <div class="zone">
+        <span class="lbl">Forced signals</span>
+        <div id="forcedList" class="chips"></div>
+      </div>
+      <div class="zone" style="grid-column:span 2">
+        <span class="lbl">Fault injections · selected project</span>
+        <ol class="flist" id="faultHist"></ol>
+      </div>
+      <div class="zone">
+        <span class="lbl">Scene on rig</span>
+        <div class="sm c2">Sorting by Height (Basic)</div>
+        <div class="meta">sorting-by-height-basic · .factoryio · 24 tags · 4 faults</div>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<!-- ============================== 04 MONITOR ============================== -->
+<section class="page" id="page-monitor"><div class="glass">
+  <div class="phead" data-st>
+    <span class="lbl"><span class="n">04</span>Monitor</span>
+    <h1>Monitor.</h1>
+    <p>IO, health, self-improvement, ablation, logs.</p>
+  </div>
+
+  <div class="tabs" role="tablist" data-st>
+    <button role="tab" data-tab="io">IO</button>
+    <button role="tab" data-tab="health">Health</button>
+    <button role="tab" data-tab="rsi">Self-improvement</button>
+    <button role="tab" data-tab="ablation">Ablation</button>
+    <button role="tab" data-tab="logs">Logs</button>
+    <span class="tab-ink" id="tabInk"></span>
+  </div>
+
+  <!-- IO -->
+  <div class="tpanel" data-panel="io">
+    <div class="sec-h" style="margin-top:24px"><span class="lbl">IO points · sorting-by-height-basic</span><span class="mono c4 sm" id="ioMeta"></span></div>
+    <div class="iofilter">
+      <button class="on" data-iof="all">All</button><button data-iof="sensor">Inputs</button><button data-iof="actuator">Outputs</button><button data-iof="forced">Forced</button>
+    </div>
+    <table class="t io"><thead><tr><th>Tag</th><th style="width:88px">Address</th><th style="width:48px">Dir</th><th style="width:196px">Kind</th><th class="r" style="width:104px">Value</th></tr></thead><tbody id="ioBody"></tbody></table>
+    <div class="meta" style="margin-top:8px">Click a row to focus it in the 3D view. Values from the rig's Modbus map (mock).</div>
+  </div>
+
+  <!-- HEALTH -->
+  <div class="tpanel" data-panel="health" hidden>
+    <div class="hgrid">
+      <div><span class="lbl">Atlas</span><div class="big"><span class="dot ok live"></span>Connected</div><div class="meta">database mongomation · auth db configured</div></div>
+      <div><span class="lbl">Worker</span><div class="big"><span class="dot ok live"></span><span id="hbBig">4s</span></div><div class="meta">worker-aws-1 · ip-10-0-1-23 · pid 4120 · job 6708f2c1</div></div>
+      <div><span class="lbl">Rig</span><div class="big"><span class="dot ok live"></span>6s</div><div class="meta">Factory I/O reachable · OpenPLC running · scene verified</div></div>
+    </div>
+
+    <div class="g12" style="margin-top:40px">
+      <div class="s6">
+        <div class="sec-h"><span class="lbl">Current job</span><span class="mono c4 sm">0 queued</span></div>
+        <dl class="kv3">
+          <dt>Type</dt><dd>engineer <span class="st" style="margin-left:8px"><span class="dot run live"></span>running</span></dd>
+          <dt>Job</dt><dd class="mono">6708fc33</dd>
+          <dt>Resumed</dt><dd class="mono sm" style="color:var(--sig)">from MongoDB · previous claim worker-aws-0 · interrupted 10:58:41</dd>
+          <dt>Claimed by</dt><dd class="mono">worker-aws-1</dd>
+          <dt>Heartbeat</dt><dd class="mono">3s ago</dd>
+          <dt>Attempts</dt><dd class="mono">2</dd>
+          <dt>Started · finished</dt><dd class="mono">11:00:09 · —</dd>
+          <dt>Project</dt><dd class="mono">6708f2c1</dd>
+        </dl>
+        <div style="display:flex;gap:16px;margin-top:24px">
+          <button class="btn sm ghost" style="border-color:var(--err);color:var(--err)" onclick="workerCmd('interrupt')">Interrupt worker</button>
+          <button class="btn sm" onclick="workerCmd('resume')">Resume from MongoDB</button>
+        </div>
+        <div class="meta" id="cmdLine">last command · interrupt · done · handled by worker-aws-1 · 9m ago</div>
+      </div>
+      <div class="s6">
+        <div class="sec-h"><span class="lbl">Stage checkpoints in Atlas</span><span class="mono c4 sm">11/12 done · 6708f2c1</span></div>
+        <ol class="ck" id="ckList"></ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- SELF-IMPROVEMENT -->
+  <div class="tpanel" data-panel="rsi" hidden>
+    <div class="rsi-top">
+      <div>
+        <span class="lbl">Active harness</span>
+        <div class="hv"><span class="mono">v4</span><span class="st"><span class="dot ok"></span>kept · parent v3 · 10-11 10:41</span></div>
+      </div>
+      <div>
+        <span class="lbl">Improved</span>
+        <div class="hv"><span>Yes</span><span class="st"><span class="dot run"></span>+17 pp requirement satisfaction vs v0</span></div>
+      </div>
+      <div>
+        <span class="lbl">Loop</span>
+        <div class="hv"><span class="mono">7</span><span class="st">proposals · 4 kept · 2 rejected · 1 pending</span></div>
+      </div>
+    </div>
+
+    <div class="sec gap" style="margin-top:32px">
+      <div class="sec-h"><span class="lbl">Requirement satisfaction by harness version</span><span class="mono c4 sm">frozen benchmark · train split</span></div>
+      <svg class="chart" id="rsiChart" viewBox="0 0 720 200" aria-label="Score trend"></svg>
+      <div class="legend mono"><span><i class="k1"></i>kept</span><span><i class="k2"></i>rejected</span><span><i class="k3"></i>pending</span></div>
+    </div>
+
+    <div class="sec gap">
+      <div class="sec-h"><span class="lbl">Rules · v4</span><button class="tbtn" id="rulesBtn" onclick="toggleRules()">6 rules · 3 setting groups</button></div>
+      <div id="rules" hidden>
+        <ol class="rules">
+          <li>Latch every timeout fault on TON.Q; never reset the latch in the same scan.</li>
+          <li>Treat NC inputs (Stop, Emergency stop) as healthy when TRUE.</li>
+          <li>Stop and E-stop dominate Start in every seal-in.</li>
+          <li>Retroreflective eyes are active-low: FALSE means blocked.</li>
+          <li>Reset clears a fault only when its cause is no longer present.</li>
+          <li>Declare sensors AT %QX12.4.. and only read them.</li>
+        </ol>
+        <div class="meta">codegen: temperature=0.2 · max_repairs=3 · tests: settle_ms=1500 · sample_ms=50 · review: strict_io=true</div>
+      </div>
+    </div>
+
+    <div class="sec gap">
+      <div class="sec-h"><span class="lbl">Latest proposal</span><span class="mono c4 sm">10-11 11:12</span></div>
+      <div class="prov"><span class="dot run live"></span><b>Live</b><span>measured in this session</span></div>
+      <div class="pline"><span class="st"><span class="dot run live"></span>pending</span><span class="mono sm">v4 → candidate v5</span></div>
+      <p class="sm" style="max-width:64ch;margin:16px 0 8px"><span class="lbl" style="margin-right:8px">Failure pattern</span>Two of three jam tests failed under the pallet-sensor fault: the harness lets the code generator reset the jam latch from the Reset button without checking the cause.</p>
+      <p class="sm c2" style="margin:0 0 16px"><span class="lbl" style="margin-right:8px">Expected effect</span>+1 test on t4/t5 jam cases; no change elsewhere.</p>
+      <span class="lbl">Harness config diff</span>
+      <pre class="diff"><span class="d">-  rules[4]: "Reset clears a fault."</span>
+<span class="a">+  rules[4]: "Reset clears a fault only when its cause is no longer present."</span>
+   codegen.max_repairs: 3</pre>
+      <div class="guard"><span class="lbl" style="color:var(--err)">Guardrail violations</span><span class="sm c3">none</span></div>
+      <span class="lbl" style="display:block;margin-top:24px">Benchmark gate · parent vs candidate</span>
+      <table class="t" style="margin-top:8px"><thead><tr><th>Metric</th><th class="r">Parent v4</th><th class="r">Candidate v5</th><th class="r">Δ</th></tr></thead><tbody id="gateBody"></tbody></table>
+      <div class="meta">gate: keep only if requirement satisfaction improves and hidden safety pass rate does not drop</div>
+      <div class="g12" style="margin-top:24px">
+        <div class="s6"><span class="lbl">Cited runs</span><div class="chips" style="margin-top:8px"><span class="chip">6708f5d0a1</span><span class="chip">6708e9aa77</span><span class="chip">6708d1f03b</span></div></div>
+        <div class="s6"><span class="lbl">Raindrop events</span><div class="chips" style="margin-top:8px"><span class="chip">evt_9f13c0aa21</span><span class="chip">evt_9f13c0ab07</span></div></div>
+      </div>
+      <div class="meta" style="margin-top:12px">3 benchmark run(s) behind this decision</div>
+    </div>
+
+    <div class="sec gap">
+      <div class="sec-h"><span class="lbl">Harness history</span><span class="mono c4 sm">7 versions</span></div>
+      <ol class="hist" id="histList"></ol>
+    </div>
+  </div>
+
+  <!-- ABLATION -->
+  <div class="tpanel" data-panel="ablation" hidden>
+    <div class="prov" style="margin-top:24px"><span class="dot run live"></span><b>Running</b><span>ablation 6708ab12c0 · 14 case rows so far · last row 11:09:58</span></div>
+    <div class="sec gap" style="margin-top:32px">
+      <div class="sec-h"><span class="lbl">Bare one-shot vs harness v0 vs evolved · held-out</span><button class="tbtn" onclick="toast('downloaded · ablation-6708aa01.json')"><svg class="i"><use href="#i-down"/></svg>.json</button></div>
+      <table class="t"><thead><tr><th>Metric</th><th class="r" title="one-shot, no harness">Bare</th><th class="r" title="baseline harness">Harness v0</th><th class="r" title="kept by the RSI gate">Evolved v4</th></tr></thead><tbody id="ablBody"></tbody></table>
+      <div class="meta" style="margin-top:8px">run 6708aa01ff · manifest 3b9c0e71d2 · models claude-haiku / claude-sonnet · 10-11 09:40 · 2 run(s)</div>
+    </div>
+  </div>
+
+  <!-- LOGS -->
+  <div class="tpanel" data-panel="logs" hidden>
+    <div class="sec-h" style="margin-top:24px"><span class="lbl">Project events · 6708f2c1</span>
+      <span class="seg" role="group"><button class="on" data-lv2="all">All</button><button data-lv2="warn">Warn+</button><button data-lv2="error">Errors</button></span></div>
+    <ol class="log" id="evlog2"></ol>
+    <div class="sec-h" style="margin-top:40px"><span class="lbl">Worker commands &amp; jobs</span></div>
+    <ol class="log" id="joblog"></ol>
+  </div>
+
+  <div class="pager"><button class="tbtn" onclick="go('rig')"><svg class="i"><use href="#i-back"/></svg>Rig</button><button class="tbtn" onclick="go('spec')">New spec <svg class="i"><use href="#i-arrow"/></svg></button></div>
+</div></section>
+
+</main>
+
+<footer>
+  <div class="wrap"><span>All values read from MongoDB Atlas · mongomation. The UI writes job requests only.</span><button class="tbtn" style="color:var(--ink-3)" onclick="document.getElementById('coverage').classList.toggle('on')">Coverage</button></div>
+</footer>
+<div id="coverage" class="wrap">
+  <table class="t"><thead><tr><th>Old element</th><th>New location</th></tr></thead><tbody id="covBody"></tbody></table>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+/* ============================== mock data (shapes from apps/web/src/shared/mongomation.ts) ============================== */
+const EXAMPLES = [
+  {id:'conveyor-jam',title:'Entry conveyor with start/stop, e-stop and jam protection',sceneId:'sorting-by-height-basic',
+   specText:"Control the entry conveyor of the sorting station. Pressing Start runs the entry conveyor and turns on the Start light; the conveyor keeps running after Start is released until Stop is pressed, and Stop always wins. The Emergency stop must stop the conveyor immediately. Jam protection: if the pallet sensor stays active for more than 5 seconds while the conveyor runs, stop the conveyor and latch the Stop light as a fault lamp. Reset clears the fault only once the pallet sensor is clear, and the conveyor must not restart until Start is pressed again."},
+  {id:'sorting',title:'Height sorting with lane jam protection',sceneId:'sorting-by-height-basic',
+   specText:"Automate the sorting station: Start/Stop buttons run the line (Stop always wins, Emergency stop stops everything). Send tall boxes (high sensor) to the right lane and short boxes to the left lane using the chain transfer. If the left exit eye stays blocked for more than 3 seconds, stop the left conveyor and light the Reset light as a fault lamp until Reset is pressed with the eye clear."}
+];
+const PROJECTS = [
+  {id:'6708f2c1a9e4',status:'passed',specExcerpt:'Control the entry conveyor of the sorting station. Pressing Start runs the entry conveyor…',sceneId:'sorting-by-height-basic',currentVersion:3,costUsd:0.41,createdAt:'10-11 11:02',specText:EXAMPLES[0].specText},
+  {id:'6708e9aa77c0',status:'running',specExcerpt:'Automate the sorting station: Start/Stop buttons run the line…',sceneId:'sorting-by-height-basic',currentVersion:1,costUsd:0.12,createdAt:'10-11 10:48',specText:EXAMPLES[1].specText},
+  {id:'6708d1f03b21',status:'failed',specExcerpt:'Pressing Start runs the entry conveyor and it keeps running until Stop is pressed…',sceneId:'sorting-by-height-basic',currentVersion:2,costUsd:0.27,createdAt:'10-11 09:15',specText:'Pressing Start runs the entry conveyor and it keeps running until Stop is pressed; Stop wins over Start. The Start light shows when the conveyor is running.'},
+  {id:'6708c0b19d55',status:'blocked',specExcerpt:'',sceneId:null,costUsd:undefined,createdAt:'10-10 22:40',specText:''}
+];
+const DOT = {passed:'ok',done:'ok',verified:'ok',running:'run live',queued:'run',failed:'err',blocked:'warn'};
+const SPEC_MIN=40, SPEC_MAX=4000;
+let selectedProject = PROJECTS[0].id, pinned = false, signedIn = true;
+const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const EASE = 'cubic-bezier(.2,.8,.2,1)';
+const $ = id => document.getElementById(id);
+const short = (id,n=8)=>(id||'').slice(0,n);
+
+/* ============================== routing + transitions ============================== */
+const ROUTES = ['spec','generate','rig','monitor'];
+let curRoute = null, sub = [];
+function parse(r){ const p=(r||'spec').split('/'); return {r:ROUTES.includes(p[0])?p[0]:'spec', sub:p.slice(1)}; }
+function go(r){ try{ if(location.hash.slice(1)!==r) history.pushState(null,'','#'+r); }catch(e){} show(r); }
+window.addEventListener('popstate',()=>show(location.hash.slice(1)));
+window.addEventListener('hashchange',()=>show(location.hash.slice(1)));
+function show(raw){
+  const {r, sub:s} = parse(raw); sub = s;
+  const idx = ROUTES.indexOf(r);
+  document.querySelectorAll('.rstep').forEach((b,i)=>{b.classList.toggle('on',i===idx);b.classList.toggle('done',i<idx);b.setAttribute('aria-current',i===idx?'step':'false')});
+  $('railProg').style.width = ((idx+1)/ROUTES.length*100)+'%';
+  if (r===curRoute){ if(typeof onRoute==='function') onRoute(r,s); return; }
+  const out = curRoute && $('page-'+curRoute), inn = $('page-'+r);
+  const enter = ()=>{
+    document.querySelectorAll('.page').forEach(p=>p.classList.toggle('on',p===inn));
+    window.scrollTo(0,0);
+    if(!RM) inn.querySelectorAll('[data-st]').forEach((el,i)=>el.animate([{opacity:0,transform:'translateY(8px)'},{opacity:1,transform:'none'}],{duration:320,delay:i*40,easing:EASE,fill:'backwards'}));
+    if(typeof onRoute==='function') onRoute(r,s);
+  };
+  curRoute = r; document.body.dataset.route = r; applyShot(r);
+  if (out && !RM){ const a=out.animate([{opacity:1,transform:'none'},{opacity:0,transform:'translateY(8px)'}],{duration:150,easing:EASE}); a.onfinish=enter; }
+  else enter();
+}
+document.querySelectorAll('.rstep').forEach(b=>b.addEventListener('click',()=>go(b.dataset.route)));
+
+/* ============================== utilities ============================== */
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('on'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('on'),2200); }
+function toggleNotice(){ $('notice').hidden=!$('notice').hidden; }
+function toggleSignIn(){ signedIn=!signedIn; $('signBtn').textContent=signedIn?'Sign out':'Sign in'; $('handle').textContent=signedIn?'zubair':'guest'; updateSpec(); }
+function countTo(el,to,{dur=400,fmt=v=>Math.round(v)}={}){ const from=parseFloat(el.dataset.v||0)||0; el.dataset.v=to; if(RM){el.textContent=fmt(to);return;} const t0=performance.now(); const step=t=>{const k=Math.min(1,(t-t0)/dur), e=1-Math.pow(1-k,3); el.textContent=fmt(from+(to-from)*e); if(k<1) requestAnimationFrame(step)}; requestAnimationFrame(step); }
+const st = (status,text)=>`<span class="st"><span class="dot ${DOT[status]||''}"></span>${text??status}</span>`;
+
+/* ============================== project context ============================== */
+function renderProjects(){
+  $('projSwitch').innerHTML = PROJECTS.map(p=>`<option value="${p.id}" ${p.id===selectedProject?'selected':''}>${short(p.id)}</option>`).join('');
+  $('projCount').textContent = String(PROJECTS.length).padStart(2,'0')+' shown · newest first';
+  $('projBody').innerHTML = PROJECTS.map(p=>`<tr class="${p.id===selectedProject?'sel':''}" onclick="selectProject('${p.id}')" tabindex="0" onkeydown="if(event.key==='Enter')selectProject('${p.id}')">
+      <td class="m">${short(p.id)}</td><td>${st(p.status)}</td>
+      <td><span class="ex">${p.specExcerpt||'<span class="c4">no spec text</span>'}</span><span class="meta" style="display:block;margin:0">${p.sceneId||'no scene'}</span></td>
+      <td class="m r">${p.currentVersion!==undefined?'v'+p.currentVersion:'—'}</td>
+      <td class="m r hide-sm">${p.costUsd!==undefined?'$'+p.costUsd.toFixed(2):'—'}</td>
+      <td class="m r hide-sm">${p.createdAt}</td></tr>`).join('');
+  $('followBtn').textContent = pinned?'Follow newest':'Following newest'; $('followBtn').disabled=!pinned;
+  $('followTop').textContent = pinned?'follow newest':'following newest'; $('followTop').disabled=!pinned;
+  $('applyTarget').textContent = short(selectedProject);
+  updateSpec();
+}
+function selectProject(id){ selectedProject=id; pinned=id!==PROJECTS[0].id; renderProjects(); }
+function followNewest(){ selectedProject=PROJECTS[0].id; pinned=false; renderProjects(); }
+$('projSwitch').addEventListener('change',e=>selectProject(e.target.value));
+function skeletonHistory(){ $('projBody').innerHTML = Array.from({length:4},()=>`<tr><td><span class="sk" style="width:64px"></span></td><td><span class="sk" style="width:56px"></span></td><td><span class="sk" style="width:80%"></span></td><td><span class="sk" style="width:120px"></span></td><td class="r"><span class="sk" style="width:24px;margin-left:auto"></span></td><td class="r"><span class="sk" style="width:40px;margin-left:auto"></span></td><td class="r"><span class="sk" style="width:80px;margin-left:auto"></span></td></tr>`).join(''); }
+
+/* ============================== 01 spec ============================== */
+$('xlist').innerHTML = EXAMPLES.map((ex,i)=>`<li class="xitem">
+  <span class="n">${String(i+1).padStart(2,'0')}</span>
+  <div><h3>${ex.title}</h3><div class="meta">${ex.id} · ${ex.sceneId}</div>
+  <div class="acts"><button class="tbtn" onclick="loadExample('${ex.id}')"><svg class="i"><use href="#i-load"/></svg>Load</button><button class="tbtn sig" onclick="runExample('${ex.id}')"><svg class="i"><use href="#i-play"/></svg>Run example</button></div></div></li>`).join('');
+function loadExample(id){ const ex=EXAMPLES.find(e=>e.id===id); typeInto(ex.specText); $('scene').value=ex.sceneId; toast('loaded · '+ex.id); }
+function runExample(id){ if(!signedIn) return toast('sign in to send this request'); loadExample(id); toast('example queued · job 6708fa01'); setTimeout(()=>go('generate'),700); }
+function loadProjectSpec(){ const p=PROJECTS.find(x=>x.id===selectedProject); if(p.specText) typeInto(p.specText); }
+function applySpecChange(){ toast('spec change queued · job 6708fb12'); }
+function typeInto(text){
+  const ta=$('spec');
+  if(RM){ ta.value=text; return updateSpec(); }
+  let i=0; clearInterval(ta._t); const step=Math.max(4,Math.ceil(text.length/40));
+  ta._t=setInterval(()=>{ i=Math.min(text.length,i+step); ta.value=text.slice(0,i); updateSpec(); if(i>=text.length) clearInterval(ta._t); },12);
+}
+let lastCount = -1;
+function renderCounter(n){
+  const s=String(n).padStart(4,'0'), prev=String(Math.max(lastCount,0)).padStart(4,'0');
+  $('counter').innerHTML = s.split('').map((d,i)=>`<span class="d${lastCount>=0&&d!==prev[i]?' tick':''}">${d}</span>`).join('')+`<span class="c4">&nbsp;/ ${SPEC_MAX}</span>`;
+  requestAnimationFrame(()=>requestAnimationFrame(()=>$('counter').querySelectorAll('.tick').forEach(e=>e.classList.remove('tick'))));
+  $('counter').classList.toggle('over', n>SPEC_MAX); lastCount=n;
+}
+function syncGutter(){
+  const ta=$('spec'), m=$('mirror'), lines=ta.value.split('\n');
+  m.style.width = ta.clientWidth+'px';
+  m.innerHTML = lines.map(l=>`<div>${l.replace(/&/g,'&amp;').replace(/</g,'&lt;')||'&nbsp;'}</div>`).join('');
+  const caretLine = ta.value.slice(0,ta.selectionStart).split('\n').length-1;
+  $('gutter').innerHTML = [...m.children].map((c,i)=>`<div class="${i===caretLine&&document.activeElement===ta?'cur':''}" style="height:${c.offsetHeight}px">${i+1}</div>`).join('');
+}
+function updateSpec(){
+  const t=$('spec').value.trim(), n=t.length, p=PROJECTS.find(x=>x.id===selectedProject);
+  renderCounter(n); syncGutter();
+  $('loadProjSpec').disabled=!p.specText;
+  $('applySpec').disabled = !signedIn||n<SPEC_MIN||n>SPEC_MAX||t===(p.specText||'').trim();
+  const why = !signedIn?'sign in to send this request':n===0?'':n<SPEC_MIN?`min ${SPEC_MIN} characters`:n>SPEC_MAX?`max ${SPEC_MAX} characters`:'';
+  $('genBtn').disabled = !signedIn||n<SPEC_MIN||n>SPEC_MAX; $('genWhy').textContent = why;
+}
+['input','click','keyup','focus','blur'].forEach(e=>$('spec').addEventListener(e,updateSpec));
+window.addEventListener('resize',syncGutter);
+function generate(){
+  const b=$('genBtn'), p=$('genProg');
+  if(RM){ toast('run queued · job 6708fc33'); return go('generate'); }
+  b.animate([{opacity:1},{opacity:0}],{duration:150,easing:EASE,fill:'forwards'});
+  p.style.opacity=1; p.animate([{transform:'scaleX(.96)'},{transform:'none'}],{duration:200,easing:EASE});
+  p.querySelector('i').animate([{width:'0%'},{width:'100%'}],{duration:900,easing:EASE,fill:'forwards'}).onfinish=()=>{
+    go('generate');
+    setTimeout(()=>{ p.style.opacity=0; b.getAnimations().forEach(a=>a.cancel()); },400);
+  };
+}
+
+
+/* ============================== 02 generate ============================== */
+const STAGES = [
+  {label:'Requirements',status:'done',dur:'8.1 s',att:1,t:'11:00:12'},
+  {label:'I/O design',status:'done',dur:'5.4 s',att:1,t:'11:00:20'},
+  {label:'PLC code',status:'done',dur:'21.7 s',att:1,t:'11:00:26',sub:'state machine done · plc code done'},
+  {label:'Compilation',status:'done',dur:'15.0 s',att:3,t:'11:05:06',sub:'preflight done · compile done'},
+  {label:'Deployment',status:'done',dur:'6.2 s',att:3,t:'11:05:22'},
+  {label:'Simulation',status:'done',dur:'48.9 s',att:3,t:'11:06:02'},
+  {label:'Independent tests',status:'done',dur:'52.3 s',att:3,t:'11:06:51'},
+  {label:'Diagnosis',status:'done',dur:'9.8 s',att:2,t:'11:04:35',err:'v2 · R4 jam timeout not latched · T4 failed @ 7350 ms'},
+  {label:'Repair',status:'done',dur:'17.5 s',att:2,t:'11:04:45'},
+  {label:'Verification',status:'running',dur:'12 s',att:1,t:'11:07:51'}
+];
+function renderPipe(){
+  $('pipe').innerHTML = STAGES.map((s,i)=>`<li class="lrow ${s.status}">
+    <span class="n">${String(i+1).padStart(2,'0')}</span>
+    <span><span class="name">${s.label}</span>${s.sub?`<span class="sub">${s.sub}</span>`:''}${s.err?`<span class="err">${s.err}</span>`:''}</span>
+    <span>${st(s.status, s.status==='running'?'running':s.status)}</span>
+    <span class="m">${s.att} att</span><span class="m">${s.dur}</span></li>`).join('');
+}
+const ST_SRC = `(* MongoMation · harness v4 · conveyor-jam *)
+PROGRAM main
+  VAR
+    Start_btn      AT %QX13.4 : BOOL;   (* NO push button *)
+    Stop_btn       AT %QX13.6 : BOOL;   (* NC: TRUE at rest *)
+    EStop          AT %QX13.7 : BOOL;   (* NC latching *)
+    Reset_btn      AT %QX13.5 : BOOL;
+    Pallet_sensor  AT %QX12.6 : BOOL;
+    Conveyor_entry AT %QX0.0  : BOOL;
+    Start_light    AT %QX0.7  : BOOL;
+    Stop_light     AT %QX1.1  : BOOL;   (* fault lamp *)
+  END_VAR
+  VAR
+    Running  : BOOL := FALSE;
+    JamFault : BOOL := FALSE;
+    JamTimer : TON;
+  END_VAR
+
+  (* Jam protection: pallet sensor active > 5 s while running *)
+  JamTimer(IN := Running AND Pallet_sensor, PT := T#5s);
+  IF JamTimer.Q THEN
+    JamFault := TRUE;
+  END_IF;
+
+  (* Reset only once the pallet sensor is clear *)
+  IF Reset_btn AND NOT Pallet_sensor THEN
+    JamFault := FALSE;
+  END_IF;
+
+  (* Start/stop seal-in; Stop and E-stop always win *)
+  IF NOT EStop OR NOT Stop_btn OR JamFault THEN
+    Running := FALSE;
+  ELSIF Start_btn THEN
+    Running := TRUE;
+  END_IF;
+
+  Conveyor_entry := Running;
+  Start_light    := Running;
+  Stop_light     := JamFault;
+END_PROGRAM
+
+CONFIGURATION Config0
+  RESOURCE Res0 ON PLC
+    TASK MainTask(INTERVAL := T#20ms, PRIORITY := 0);
+    PROGRAM Inst0 WITH MainTask : main;
+  END_RESOURCE
+END_CONFIGURATION`;
+const ST_DIFF = ["  (* Jam protection: pallet sensor active > 5 s while running *)","  JamTimer(IN := Running AND Pallet_sensor, PT := T#5s);","- JamFault := JamTimer.Q;","+ IF JamTimer.Q THEN","+   JamFault := TRUE;","+ END_IF;","","  (* Reset only once the pallet sensor is clear *)","- IF Reset_btn THEN","+ IF Reset_btn AND NOT Pallet_sensor THEN","    JamFault := FALSE;","  END_IF;"];
+const KW = new Set('PROGRAM END_PROGRAM VAR END_VAR AT IF THEN ELSIF ELSE END_IF CONFIGURATION END_CONFIGURATION RESOURCE END_RESOURCE ON TASK WITH INTERVAL PRIORITY NOT AND OR'.split(' '));
+const TY = new Set('BOOL INT TON TIME PLC'.split(' '));
+const escH = s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+function hl(line){
+  return escH(line).replace(/(\(\*.*?\*\))|(%[IQM][XW]\d+(?:\.\d+)?)|(T#\w+)|(\b\d+\b)|(\b[A-Za-z_]\w*\b)/g,(m,c,a,t,n)=>{
+    if(c) return `<span class="cm">${m}</span>`; if(a) return `<span class="ad">${m}</span>`; if(t||n) return `<span class="nu">${m}</span>`;
+    if(KW.has(m)) return `<span class="k">${m}</span>`; if(TY.has(m)) return `<span class="ty">${m}</span>`; if(m==='TRUE'||m==='FALSE') return `<span class="nu">${m}</span>`; return m; });
+}
+let plcMode='source', streamT=null;
+const lineHTML = (l,i,cls='')=>`<div class="ln ${cls}"><span class="no">${i}</span><code>${hl(l)||' '}</code></div>`;
+function setPlcMode(m){ plcMode=m; $('vSrc').classList.toggle('on',m==='source'); $('vDiff').classList.toggle('on',m==='diff'); renderCode(false); }
+function renderCode(stream){
+  clearInterval(streamT);
+  const box=$('plcCode');
+  if(plcMode==='diff'){
+    box.innerHTML = `<div class="ln"><span class="no"></span><code><span style="color:var(--ok)">+4 added</span>   <span style="color:var(--err)">−2 removed</span></code></div>`+
+      ST_DIFF.map(l=>{const k=l[0]==='+'?'add':l[0]==='-'?'del':'';return `<div class="ln ${k}"><span class="no">${k==='add'?'+':k==='del'?'−':''}</span><code>${hl(l.slice(2))||' '}</code></div>`}).join('');
+    return;
+  }
+  const lines = ST_SRC.split('\n');
+  if(!stream||RM){ box.innerHTML = lines.map((l,i)=>lineHTML(l,i+1)).join(''); return; }
+  box.innerHTML=''; let i=0;
+  streamT=setInterval(()=>{
+    const c=box.querySelector('.caret'); if(c) c.remove();
+    box.insertAdjacentHTML('beforeend', lineHTML(lines[i],i+1,'new'));
+    i++;
+    if(i<lines.length) box.lastElementChild.querySelector('code').insertAdjacentHTML('beforeend','<span class="caret"></span>');
+    else clearInterval(streamT);
+    box.scrollTop = box.scrollHeight;
+  },22);
+}
+$('plcVer').addEventListener('change',e=>{ const v=+e.target.value; $('verMeta').textContent = (v===1?'codegen':'repair')+' · harness v'+(v===1?3:4)+' · 11:0'+(v+3)+':42'; $('vDiff').textContent = v===1?'Diff':'Diff vs v'+(v-1); renderCode(false); });
+
+const TESTS = [
+  {id:'T1',title:'Start runs the entry conveyor and seals in',cat:'start_stop',req:'R1',n:142,dur:'7.1 s',v:'passed'},
+  {id:'T2',title:'Stop wins over Start',cat:'start_stop',req:'R1',n:118,dur:'5.9 s',v:'passed'},
+  {id:'T3',title:'Emergency stop stops immediately',cat:'safety',req:'R3',n:96,dur:'4.8 s',v:'passed'},
+  {id:'T4',title:'Jam > 5 s stops conveyor, latches Stop light',cat:'timeout',req:'R4',n:210,dur:'10.5 s',v:'passed'},
+  {id:'T5',title:'Reset ignored while pallet sensor active',cat:'reset',req:'R5',n:160,dur:'8.0 s',v:'passed'},
+  {id:'T6',title:'No restart after reset without Start',cat:'reset',req:'R5',n:132,dur:'6.6 s',v:'passed'},
+  {hidden:true,title:'safety · hidden regression',v:'passed'},
+  {hidden:true,title:'timeout · hidden regression',v:'passed'}
+];
+function timeline(){
+  const rows=[['Start','s',[[0,0],[1000,1],[1300,0]]],['Pallet sensor','s',[[0,0],[2000,1]]],['Conveyor entry','a',[[0,0],[1000,1],[7050,0]]],['Stop light','a',[[0,0],[7050,1]]]];
+  const D=10500,W=600, ax=7000/D*W;
+  return `<div class="meta" style="margin:0 0 8px">210 samples · 9 change points · <span style="color:var(--ink)">━</span> sensor (input) · <span style="color:var(--sig)">━</span> actuator (output)</div>`+
+   rows.map(([n,role,pts])=>{let d='';pts.forEach((p,i)=>{const x=p[0]/D*W,y=p[1]?5:19,x1=(pts[i+1]?pts[i+1][0]:D)/D*W;d+=(i?`V${y}`:`M${x},${y}`)+`H${x1}`});
+     return `<div class="row"><span>${n}</span><svg viewBox="0 0 ${W} 24" preserveAspectRatio="none"><line x1="0" x2="${W}" y1="19" y2="19" stroke="#E7E7E9"/><line x1="${ax}" x2="${ax}" y1="0" y2="24" stroke="#0B0B0C" stroke-opacity=".35" stroke-dasharray="2 2"/><path class="trace" d="${d}" fill="none" stroke="${role==='s'?'#0B0B0C':'#FF5A1F'}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg></div>`}).join('')+
+   `<div class="row" style="margin-top:4px"><span></span><span class="mono" style="font-size:11px;color:var(--ink-4);display:flex;justify-content:space-between"><span>0</span><span>2.5 s</span><span>5 s</span><span>7.5 s</span><span>10 s</span></span></div>`+
+   `<div class="meta" style="margin-top:8px"><span class="dot ok"></span>&nbsp; conveyor stopped within 5.0 s ± 0.25 s of jam @ 7000 ms</div><button class="tbtn" style="margin-top:8px" onclick="toast('table view · t ms / tag / value')">Table</button>`;
+}
+let openTest=3;
+const chevSVG='<svg class="i chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4"/></svg>';
+function renderTests(){
+  $('tests').innerHTML = TESTS.map((t,i)=> t.hidden
+    ? `<li class="hid"><div class="th" title="Hidden regression test: steps and measurements are never shown"><svg class="i chev" viewBox="0 0 16 16"><rect x="4" y="7" width="8" height="6" rx="1"/><path d="M6 7V5a2 2 0 014 0v2"/></svg><span><i>${t.title}</i><span class="meta">hidden</span></span><span class="m">—</span><span>${st(t.v)}</span></div></li>`
+    : `<li class="${openTest===i?'open':''}"><button class="th" onclick="openTest=${openTest===i?-1:i};renderTests()" aria-expanded="${openTest===i}">${chevSVG}<span>${t.title}<span class="meta">${t.id} · ${t.cat} · ${t.req} · ${t.n} samples</span></span><span class="m">${t.dur}</span><span>${st(t.v)}</span></button>${openTest===i?`<div class="tl">${timeline()}</div>`:''}</li>`).join('');
+}
+const VERDICTS=[['R1','Start/Stop seal-in on the entry conveyor, stop dominates','T1, T2','verified'],['R2','Start light on while running','T1','verified'],['R3','Emergency stop stops the conveyor immediately','T3','verified'],['R4','Jam > 5 s stops conveyor and latches Stop light','T4','verified'],['R5','Reset clears fault only when pallet sensor clear; no auto-restart','T5, T6','verified'],['R6','Counter display shows boxes passed','—','unsupported']];
+$('verdicts').innerHTML = VERDICTS.map(v=>`<tr><td class="m">${v[0]}</td><td>${v[1]}<span class="meta" style="display:block;margin:0">tests ${v[2]}</span></td><td class="r">${st(v[3]==='verified'?'passed':'',v[3])}</td></tr>`).join('');
+const EVENTS=[['11:07:51','info','verification','final verification started on v3'],['11:07:49','info','tests','6/6 public passed · 2/2 hidden passed'],['11:06:02','info','simulate','sim run 6708f5d0 started on rig-aws-1'],['11:05:40','info','deploy','v3 uploaded to OpenPLC and started'],['11:05:21','info','compile','OpenPLC compile ok · 14.2 s'],['11:05:03','info','repair','repair produced v3 · +4 −2 lines'],['11:04:45','warn','diagnosis','R4 failed in v2 · conveyor ran 5.4 s past jam timeout'],['11:03:10','error','tests','T4 FAIL @ 7350 ms · Conveyor entry still TRUE'],['11:01:12','warn','compile','preflight warning · unused variable Counter'],['11:00:20','info','requirements','6 requirements extracted · 1 unsupported']];
+function renderLog(lv){
+  const ev = EVENTS.filter(e=>lv==='all'||(lv==='warn'?e[1]!=='info':e[1]==='error'));
+  $('evCount').textContent = EVENTS.length;
+  $('evlog').innerHTML = ev.map(e=>`<li><span class="c4">${e[0]}</span><span class="lv ${e[1]}">${e[1]}</span><span><span class="sg">[${e[2]}]</span> ${e[3]}</span></li>`).join('');
+}
+document.querySelectorAll('[data-lv]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-lv]').forEach(x=>x.classList.toggle('on',x===b)); renderLog(b.dataset.lv);}));
+
+let introT=[];
+function playGenerate(){
+  introT.forEach(clearTimeout); introT=[];
+  renderPipe(); renderTests(); renderLog('all');
+  const rows=[...document.querySelectorAll('#pipe .lrow')], led=$('pipe');
+  const done=STAGES.filter(s=>s.status==='done').length;
+  if(RM){ rows.forEach(r=>r.classList.add('shown')); led.style.setProperty('--fill','100%'); $('g-done').textContent=done; renderCode(false);
+    document.querySelectorAll('[data-count]').forEach(b=>b.textContent=b.dataset.count); return; }
+  led.style.setProperty('--fill','0%'); $('g-done').textContent=0;
+  rows.forEach((r,i)=>introT.push(setTimeout(()=>{
+    r.classList.add('shown'); led.style.setProperty('--fill', ((i+1)/rows.length*100)+'%');
+    if(STAGES[i].status==='done') $('g-done').textContent = STAGES.slice(0,i+1).filter(s=>s.status==='done').length;
+  }, 200+i*90)));
+  introT.push(setTimeout(()=>renderCode(true), 300));
+  document.querySelectorAll('[data-count]').forEach(b=>{ b.dataset.v=0; b.textContent=0; introT.push(setTimeout(()=>countTo(b,+b.dataset.count,{dur:600}),900)); });
+}
+const _prevOnRoute = window.onRoute;
+window.onRoute = function(r,s){ if(typeof _prevOnRoute==='function') _prevOnRoute(r,s); if(r==='generate') playGenerate(); };
+renderPipe(); renderCode(false); renderTests(); renderLog('all');
+
+
+/* ============================== shared IO model + mock sim (feeds 03 Rig, 04 Monitor, factory3d.setIO) ============================== */
+// Tags and faults copied from scenes/sorting-by-height-basic.json (the real scene registry).
+const TAGS = [
+  ['High sensor','sensor','%QX12.4','diffuse_sensor',false,'TRUE while a tall box passes the height gate'],
+  ['Low sensor','sensor','%QX12.5','diffuse_sensor',false,'TRUE while any box passes the height gate'],
+  ['Pallet sensor','sensor','%QX12.6','diffuse_sensor',false,'TRUE while a box waits at the end of the entry conveyor'],
+  ['Loaded','sensor','%QX12.7','presence_sensor',false,'TRUE when a box is on the chain transfer'],
+  ['At left entry','sensor','%QX13.0','retroreflective_sensor',true,'left lane entry eye; FALSE while a box blocks it'],
+  ['At left exit','sensor','%QX13.1','retroreflective_sensor',true,'left lane exit eye; FALSE while a box blocks it'],
+  ['At right entry','sensor','%QX13.2','retroreflective_sensor',true,'right lane entry eye; FALSE while a box blocks it'],
+  ['At right exit','sensor','%QX13.3','retroreflective_sensor',true,'right lane exit eye; FALSE while a box blocks it'],
+  ['Start','sensor','%QX13.4','pushbutton',false,'green Start push button (NO)'],
+  ['Reset','sensor','%QX13.5','pushbutton',false,'Reset push button (NO)'],
+  ['Stop','sensor','%QX13.6','pushbutton',true,'red Stop push button (NC: TRUE at rest)'],
+  ['Emergency stop','sensor','%QX13.7','emergency_stop',true,'mushroom e-stop (NC, latching: TRUE healthy)'],
+  ['Auto','sensor','%QX14.0','selector',false,'Auto position of the Auto/Manual selector'],
+  ['Conveyor entry','actuator','%QX0.0','conveyor',false,'entry belt conveyor motor'],
+  ['Load','actuator','%QX0.1','chain_transfer',false,'chain transfer rollers: load'],
+  ['Unload','actuator','%QX0.2','chain_transfer',false,'chain transfer rollers: unload'],
+  ['Transf. left','actuator','%QX0.3','chain_transfer',false,'transfer to the left lane'],
+  ['Transf. right','actuator','%QX0.4','chain_transfer',false,'transfer to the right lane'],
+  ['Conveyor left','actuator','%QX0.5','conveyor',false,'left exit conveyor motor'],
+  ['Conveyor right','actuator','%QX0.6','conveyor',false,'right exit conveyor motor'],
+  ['Start light','actuator','%QX0.7','light',false,'green panel light'],
+  ['Reset light','actuator','%QX1.0','light',false,'yellow panel light'],
+  ['Stop light','actuator','%QX1.1','light',false,'red panel light (fault lamp)'],
+  ['Counter','actuator','%QW0','counter_display',false,'panel digital display (holding register 0)']
+].map(([name,role,addr,kind,nc,desc])=>({name,role,addr,kind,nc,desc}));
+const FAULTS = [
+  {id:'pallet-sensor-stuck-on',title:'Pallet sensor stuck ON',tag:'Pallet sensor',value:true},
+  {id:'left-exit-blocked',title:'Left exit eye blocked',tag:'At left exit',value:false},
+  {id:'high-sensor-stuck-on',title:'High sensor stuck ON',tag:'High sensor',value:true},
+  {id:'loaded-stuck-off',title:'Loaded sensor dead',tag:'Loaded',value:false}
+];
+const IO = {}; const FORCED = {};
+TAGS.forEach(t=>IO[t.name] = t.name==='Counter'?0:(t.nc && t.kind!=='retroreflective_sensor') || t.kind==='retroreflective_sensor');
+const SIM = {running:true,fault:false,jamT:0,boxes:[],spawnT:2.5,count:0,nid:1,startP:0,resetP:0,stopP:0,estop:false,auto:true,paused:false};
+const rd = n => (n in FORCED ? FORCED[n] : IO[n]);
+const ioListeners = [];
+function simStep(dt){
+  const B=SIM.boxes, SPD=1.5;
+  const near=(seg,key,v,w=.35)=>B.some(b=>b.seg===seg&&Math.abs(b[key]-v)<w);
+  IO['Low sensor'] = near('entry','x',-4);
+  IO['High sensor'] = B.some(b=>b.seg==='entry'&&b.tall&&Math.abs(b.x+4)<.35);
+  IO['Pallet sensor'] = B.some(b=>b.seg==='entry'&&b.x>-1.9);
+  IO['Loaded'] = B.some(b=>b.seg==='xfer');
+  IO['At left entry'] = !near('left','z',-2); IO['At left exit'] = !near('left','z',-6.5);
+  IO['At right entry'] = !near('right','z',2); IO['At right exit'] = !near('right','z',6.5);
+  IO['Start'] = SIM.startP>0; IO['Reset'] = SIM.resetP>0; IO['Stop'] = !(SIM.stopP>0); IO['Emergency stop'] = !SIM.estop; IO['Auto'] = SIM.auto;
+  SIM.startP-=dt; SIM.resetP-=dt; SIM.stopP-=dt;
+  // mock PLC program (conveyor-jam spec + sorting)
+  if (rd('Pallet sensor') && SIM.running) SIM.jamT+=dt; else SIM.jamT=0;
+  if (SIM.jamT>5) SIM.fault=true;
+  if (rd('Reset') && !rd('Pallet sensor')) SIM.fault=false;
+  if (!rd('Emergency stop')||!rd('Stop')||SIM.fault) SIM.running=false; else if (rd('Start')) SIM.running=true;
+  const xferBusy = B.some(b=>b.seg==='xfer'), atEnd = B.find(b=>b.seg==='entry'&&b.x>=-1.55);
+  const onX = B.find(b=>b.seg==='xfer');
+  IO['Conveyor entry'] = SIM.running && !(atEnd && xferBusy);
+  IO['Load'] = SIM.running && !!onX && onX.ph==='in';
+  IO['Transf. left'] = SIM.running && !!onX && onX.ph==='out' && !onX.tall;
+  IO['Transf. right'] = SIM.running && !!onX && onX.ph==='out' && onX.tall;
+  IO['Unload'] = IO['Transf. left']||IO['Transf. right'];
+  IO['Conveyor left'] = IO['Conveyor right'] = SIM.running;
+  IO['Start light'] = SIM.running; IO['Stop light'] = SIM.fault; IO['Reset light'] = SIM.fault && (performance.now()%1000<500);
+  IO['Counter'] = SIM.count;
+  // physics
+  if (IO['Conveyor entry']) { SIM.spawnT+=dt; if (SIM.spawnT>3.4 && !B.some(b=>b.seg==='entry'&&b.x<-7.6)) { B.push({id:SIM.nid++,seg:'entry',x:-8.8,z:0,tall:Math.random()<.5}); SIM.spawnT=0; } }
+  B.filter(b=>b.seg==='entry').sort((a,b)=>b.x-a.x).forEach((b,i,arr)=>{
+    if(!IO['Conveyor entry']) return;
+    const ahead = arr[i-1]; let nx=b.x+SPD*dt;
+    if (ahead && ahead.x-nx<.8) nx=ahead.x-.8;
+    if (nx>=-1.5 && xferBusy) nx=Math.min(nx,-1.5);
+    b.x=nx; if (b.x>=-1.2 && !xferBusy){ b.seg='xfer'; b.ph='in'; }
+  });
+  if (onX && SIM.running){
+    if (onX.ph==='in'){ onX.x=Math.min(0,onX.x+SPD*dt); if(onX.x>=0) onX.ph='out'; }
+    else { const d=onX.tall?1:-1; onX.z+=d*SPD*dt; if(Math.abs(onX.z)>=1.2){ onX.seg=d<0?'left':'right'; } }
+  }
+  B.filter(b=>b.seg==='left'||b.seg==='right').forEach(b=>{ if(!SIM.running) return; const d=b.seg==='left'?-1:1; b.z+=d*SPD*dt; if(Math.abs(b.z)>=8.2){ b.seg='gone'; SIM.count++; } });
+  SIM.boxes = B.filter(b=>b.seg!=='gone');
+}
+function ioSnapshot(){ const tags={}; TAGS.forEach(t=>tags[t.name]=rd(t.name)); return {tags, raw:{...IO}, forced:Object.keys(FORCED), running:SIM.running, fault:SIM.fault, boxes:SIM.boxes.map(b=>({...b}))}; }
+let simLast=performance.now();
+setInterval(()=>{
+  const now=performance.now(), dt=Math.min(.2,(now-simLast)/1000); simLast=now;
+  if(!SIM.paused) simStep(dt);
+  const snap=ioSnapshot();
+  try{ window.FACTORY && window.FACTORY.setIO && window.FACTORY.setIO(snap); }catch(e){}
+  ioListeners.forEach(f=>f(snap));
+},100);
+
+/* ============================== 03 rig UI ============================== */
+function press(name){
+  if(name==='Start') SIM.startP=.4; else if(name==='Reset') SIM.resetP=.4; else if(name==='Stop') SIM.stopP=.4;
+  else if(name==='Emergency stop'){ SIM.estop=!SIM.estop; $('estopBtn').setAttribute('aria-pressed',SIM.estop); $('estopBtn').textContent=SIM.estop?'E-stop · release':'E-stop'; }
+  try{ window.FACTORY && window.FACTORY.pulse && window.FACTORY.pulse(name); }catch(e){}
+  selectIO(name,false);
+}
+function toggleRigDetail(){ const d=$('rigDetail'); d.hidden=!d.hidden; $('detailBtn').setAttribute('aria-expanded',!d.hidden); $('detailBtn').textContent=d.hidden?'Details':'Hide details'; }
+let selectedTag=null;
+function fmtV(t,v){ return t.name==='Counter'?String(v):(v?'TRUE':'FALSE'); }
+function selectIO(name,focus=true){
+  selectedTag=name; const t=TAGS.find(x=>x.name===name); if(!t) return;
+  if(focus) focusTag(name);
+  renderSel(); if(typeof renderIOTable==='function') renderIOTable();
+}
+window.selectIO = selectIO; // factory3d.js may call this when a tag is clicked in 3D
+function renderSel(){
+  if(!selectedTag) return; const t=TAGS.find(x=>x.name===selectedTag), v=rd(t.name);
+  $('selIO').innerHTML = `<div class="sel-name">${t.name}</div><div class="meta" style="margin:2px 0 6px">${t.addr} · ${t.role==='sensor'?'input':'output'} · ${t.kind}${t.nc?' · NC':''}</div>`+
+    `<span class="st"><span class="dot ${t.name in FORCED?'run':(v?'ok':'')}"></span>${fmtV(t,v)}${t.name in FORCED?' · forced':''}</span>`;
+}
+const FJOB = {n:0};
+function injectFault(){
+  if(!signedIn) return toast('sign in to send this request');
+  const id=$('faultSel').value; const f = id?FAULTS.find(x=>x.id===id):FAULTS[Math.floor(Math.random()*FAULTS.length)];
+  FORCED[f.tag]=f.value; FJOB.n++;
+  FAULT_HIST.unshift({faultId:f.id,tag:f.tag,value:f.value,status:'applied',appliedAt:new Date().toTimeString().slice(0,8)});
+  $('faultChip').innerHTML='<span class="dot run live"></span>running'; $('faultJob').textContent='job 6708fd'+(40+FJOB.n)+' · just now';
+  toast('fault injection + harness improvement queued · '+f.id);
+  selectIO(f.tag); renderFaults();
+  setTimeout(()=>{ delete FORCED[f.tag]; FAULT_HIST[0].status='released'; FAULT_HIST[0].releasedAt=new Date().toTimeString().slice(0,8);
+    $('faultChip').innerHTML='<span class="dot ok"></span>done'; renderFaults(); }, 15000);
+}
+const FAULT_HIST=[{faultId:'pallet-sensor-stuck-on',tag:'Pallet sensor',value:true,readBack:true,status:'released',appliedAt:'10:52:14',releasedAt:'10:53:02'}];
+function renderFaults(){
+  $('forcedList').innerHTML = Object.keys(FORCED).length ? Object.keys(FORCED).map(n=>`<span class="chip forced">forced · ${n}</span>`).join('') : '<span class="meta" style="margin:0">no forced signals</span>';
+  $('faultHist').innerHTML = FAULT_HIST.map(f=>`<li><span>${f.faultId} · ${f.tag} := ${f.value}${f.readBack!==undefined?' · read back '+f.readBack:''} · applied ${f.appliedAt}${f.releasedAt?' · released '+f.releasedAt:''}</span><span class="st"><span class="dot ${f.status==='released'?'':f.status==='failed'?'err':'run'}"></span>${f.status}</span></li>`).join('');
+}
+$('faultSel').innerHTML += FAULTS.map(f=>`<option value="${f.id}">${f.title} (${f.tag})</option>`).join('');
+ioListeners.push(s=>{
+  if(curRoute!=='rig') return;
+  document.querySelectorAll('.lamp[data-tag]').forEach(l=>l.classList.toggle('on',!!s.tags[l.dataset.tag]));
+  $('counterV').textContent=s.tags['Counter'];
+  $('simSt').innerHTML = s.fault?'<span class="dot err"></span>fault · jam latched':s.running?'<span class="dot run live"></span>running':'<span class="dot"></span>stopped';
+  $('plcRun').textContent = 'running';
+  renderSel();
+});
+renderFaults();
+
+
+/* ============================== 04 monitor ============================== */
+const TABS=['io','health','rsi','ablation','logs'];
+let curTab='io', ioFilter='all';
+function setTab(t, push=true){
+  if(!TABS.includes(t)) t='io'; curTab=t;
+  document.querySelectorAll('.tabs [data-tab]').forEach(b=>{b.classList.toggle('on',b.dataset.tab===t); b.setAttribute('aria-selected',b.dataset.tab===t)});
+  document.querySelectorAll('.tpanel').forEach(p=>{
+    const on=p.dataset.panel===t; p.hidden=!on;
+    if(on&&!RM) [...p.children].forEach((el,i)=>el.animate([{opacity:0,transform:'translateY(6px)'},{opacity:1,transform:'none'}],{duration:260,delay:i*40,easing:EASE,fill:'backwards'}));
+  });
+  const b=document.querySelector(`.tabs [data-tab="${t}"]`), ink=$('tabInk');
+  if(b && b.offsetWidth){ ink.style.left=b.offsetLeft+'px'; ink.style.width=b.offsetWidth+'px'; }
+  if(push){ try{ history.replaceState(null,'','#monitor/'+t); }catch(e){} }
+  if(t==='rsi') drawChart();
+  if(t==='io') renderIOTable();
+}
+document.querySelectorAll('.tabs [data-tab]').forEach(b=>b.addEventListener('click',()=>setTab(b.dataset.tab)));
+
+// IO table
+let lastVals={};
+function renderIOTable(){
+  if(!$('ioBody')) return;
+  const snapT={}; TAGS.forEach(t=>snapT[t.name]=rd(t.name));
+  const rows=TAGS.filter(t=>ioFilter==='all'||(ioFilter==='forced'?t.name in FORCED:t.role===ioFilter));
+  $('ioBody').innerHTML = rows.map(t=>{const v=snapT[t.name], f=t.name in FORCED, changed=lastVals[t.name]!==undefined&&lastVals[t.name]!==v;
+    return `<tr class="${selectedTag===t.name?'sel':''}" onclick="selectIO('${t.name}')" tabindex="0" title="${t.desc}">
+      <td>${t.name}${t.nc?'<span class="nc">NC</span>':''}${f?'<span class="fz">forced</span>':''}</td>
+      <td class="m">${t.addr}</td><td class="m">${t.role==='sensor'?'in':'out'}</td><td class="m">${t.kind}</td>
+      <td class="r"><span class="val${changed?' flip':''}"><span class="dot ${f?'run':(t.name==='Counter'?'ok':(v?'ok':''))}"></span>${t.name==='Counter'?v:(v?'TRUE':'FALSE')}</span></td></tr>`}).join('');
+  lastVals=snapT;
+  $('ioMeta').textContent = `${TAGS.filter(t=>t.role==='sensor').length} in · ${TAGS.filter(t=>t.role==='actuator').length} out · ${Object.keys(FORCED).length} forced`;
+}
+document.querySelectorAll('[data-iof]').forEach(b=>b.addEventListener('click',()=>{ioFilter=b.dataset.iof; document.querySelectorAll('[data-iof]').forEach(x=>x.classList.toggle('on',x===b)); renderIOTable();}));
+let ioTick=0;
+ioListeners.push(()=>{ if(curRoute==='monitor'&&curTab==='io'&&(++ioTick%3===0)) renderIOTable(); });
+
+// health
+const CKS=[['requirements','done','#1','11:00:12 → 11:00:20'],['io_design','done','#1','11:00:20 → 11:00:26'],['state_machine','done','#1','11:00:26 → 11:00:37'],['plc_code','done','#1','11:00:37 → 11:00:48'],['preflight','done','#3','11:05:06 → 11:05:07'],['compile','done','#3','11:05:07 → 11:05:21'],['deploy','done','#3','11:05:22 → 11:05:40'],['simulate','done','#3','11:06:02 → 11:06:51'],['tests','done','#3','11:06:51 → 11:07:49'],['diagnosis','done','#2','11:04:35 → 11:04:45'],['repair','done','#2','11:04:45 → 11:05:03'],['verification','running','#1','11:07:51']];
+$('ckList').innerHTML = CKS.map(c=>`<li><span>${c[0].replace('_',' ')}</span>${st(c[1])}<span class="m">${c[2]} · ${c[3].split(' → ')[0]}</span></li>`).join('');
+function workerCmd(k){ if(!signedIn) return toast('sign in to send worker commands'); $('cmdLine').innerHTML=`last command · ${k} · <span style="color:var(--sig)">queued</span> · just now`; toast(`${k==='interrupt'?'interrupt':'resume'} requested · job 6708fe0${k==='interrupt'?1:2}`); }
+
+// RSI
+const VERS=[{v:0,score:.58,verdict:'kept',r:'baseline harness',rules:0,when:'10-10 18:02'},{v:1,score:.64,verdict:'kept',r:'Treat NC inputs as healthy when TRUE',rules:1,when:'10-10 19:30',parent:0},{v:2,score:.61,verdict:'rejected',r:'Prefer CASE state machines everywhere',rules:2,when:'10-10 21:12',parent:1},{v:3,score:.70,verdict:'kept',r:'Stop and E-stop dominate Start',rules:3,when:'10-11 08:55',parent:1},{v:4,score:.75,verdict:'kept',r:'Latch timeout faults on TON.Q',rules:5,when:'10-11 10:41',parent:3},{v:5,score:.79,verdict:'pending',r:'Reset only when cause cleared',rules:6,when:'10-11 11:12',parent:4},{v:6,score:.73,verdict:'rejected',r:'Raise max repairs to 5 (cost guardrail)',rules:5,when:'10-11 09:58',parent:3}];
+function drawChart(){
+  const svg=$('rsiChart'); const W=720,H=200,P=28;
+  const pts=VERS.slice().sort((a,b)=>a.v-b.v);
+  const x=i=>P+i*(W-2*P)/(pts.length-1), y=s=>H-P-((s-.5)/(.35))*(H-2*P);
+  const kept=pts.filter(p=>p.verdict==='kept');
+  const d=kept.map((p,i)=>`${i?'L':'M'}${x(pts.indexOf(p))},${y(p.score)}`).join('');
+  svg.innerHTML = `<g class="grid">${[.5,.6,.7,.8].map(s=>`<line x1="${P}" x2="${W-P}" y1="${y(s)}" y2="${y(s)}"/><text x="0" y="${y(s)+4}">${Math.round(s*100)}</text>`).join('')}</g>`+
+    `<path class="line" id="rsiLine" d="${d}"/>`+
+    pts.map((p,i)=>`<g><circle cx="${x(i)}" cy="${y(p.score)}" r="4" fill="${p.verdict==='kept'?'#0B0B0C':p.verdict==='pending'?'#FF5A1F':'#fff'}" stroke="${p.verdict==='rejected'?'#E5372B':'none'}" stroke-width="1.5" style="opacity:0"/><text x="${x(i)}" y="${H-6}" text-anchor="middle">v${p.v}</text><text x="${x(i)}" y="${y(p.score)-10}" text-anchor="middle" style="opacity:0" class="pv">${Math.round(p.score*100)}</text></g>`).join('');
+  const line=$('rsiLine'), L=line.getTotalLength();
+  if(RM){ svg.querySelectorAll('circle,.pv').forEach(c=>c.style.opacity=1); return; }
+  line.style.strokeDasharray=L; line.animate([{strokeDashoffset:L},{strokeDashoffset:0}],{duration:900,easing:EASE,fill:'forwards'});
+  svg.querySelectorAll('circle').forEach((c,i)=>c.animate([{opacity:0,transform:'scale(.4)'},{opacity:1,transform:'none'}],{duration:240,delay:150+i*110,easing:EASE,fill:'forwards'}));
+  svg.querySelectorAll('.pv').forEach((c,i)=>c.animate([{opacity:0},{opacity:1}],{duration:240,delay:250+i*110,fill:'forwards'}));
+}
+function toggleRules(){ $('rules').hidden=!$('rules').hidden; }
+const GATE=[['Requirement satisfaction','75%','79%','+4 pp','up'],['Hidden safety pass rate','100%','100%','±0',''],['Compiles first try','83%','83%','±0',''],['Test pass rate','88%','92%','+4 pp','up'],['Repairs / case','0.92','0.75','−0.17','up'],['Cost / case','$0.38','$0.36','−$0.02','up'],['Seconds / case','212 s','224 s','+12 s','down'],['Cases','12','12','±0','']];
+$('gateBody').innerHTML=GATE.map(r=>`<tr><td>${r[0]}</td><td class="m r">${r[1]}</td><td class="m r">${r[2]}</td><td class="m r ${r[4]}">${r[3]}</td></tr>`).join('');
+$('histList').innerHTML=VERS.slice().sort((a,b)=>b.v-a.v).map(v=>`<li><span class="v">v${v.v}</span><span><span class="r1">${v.r}</span><span class="meta" style="display:block;margin:0">${v.parent!==undefined?'from v'+v.parent:'baseline'} · ${v.rules} rules · scored · ${v.when}</span></span><span style="text-align:right">${st(v.verdict==='kept'?'passed':v.verdict==='pending'?'running':'failed',v.verdict)}</span></li>`).join('');
+
+// ablation
+const ABL=[['Requirement satisfaction',[.42,.58,.75],'up','pct'],['Hidden safety pass rate',[.67,.92,1],'up','pct'],['Compiles first try',[.5,.75,.83],'up','pct'],['Test pass rate',[.55,.71,.88],'up','pct'],['Repairs / case',[0,1.4,.92],'down','n'],['Cost / case',[.04,.44,.38],'down','usd'],['Seconds / case',[31,248,212],'down','s'],['Cases',[12,12,12],null,'i']];
+const fm=(v,k)=>k==='pct'?Math.round(v*100)+'%':k==='usd'?'$'+v.toFixed(2):k==='s'?v+' s':k==='n'?v.toFixed(2):String(v);
+$('ablBody').innerHTML=ABL.map(([l,vals,b,k])=>{const best=b?(b==='up'?Math.max(...vals):Math.min(...vals)):null;return `<tr><td>${l}</td>${vals.map(v=>`<td class="m r ${v===best&&new Set(vals).size>1?'best':''}">${fm(v,k)}</td>`).join('')}</tr>`}).join('')+`<tr><td class="c3">Rows in benchmark_runs</td><td class="m r c3">12</td><td class="m r c3">12</td><td class="m r c3">12</td></tr>`;
+
+// logs
+function renderLog2(lv){ const ev=EVENTS.filter(e=>lv==='all'||(lv==='warn'?e[1]!=='info':e[1]==='error')); $('evlog2').innerHTML=ev.map(e=>`<li><span class="c4">${e[0]}</span><span class="lv ${e[1]}">${e[1]}</span><span><span class="sg">[${e[2]}]</span> ${e[3]}</span></li>`).join(''); }
+document.querySelectorAll('[data-lv2]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-lv2]').forEach(x=>x.classList.toggle('on',x===b)); renderLog2(b.dataset.lv2);}));
+renderLog2('all');
+$('joblog').innerHTML=[['11:00:09','info','job','engineer 6708fc33 claimed by worker-aws-1 · resumed from MongoDB'],['10:59:58','info','command','resume · done · handled by worker-aws-1'],['10:58:41','warn','command','interrupt · done · worker-aws-0 released claim'],['10:48:02','info','job','example 6708e9aa queued'],['10:41:10','info','job','rsi_round kept harness v4']].map(e=>`<li><span class="c4">${e[0]}</span><span class="lv ${e[1]}">${e[1]}</span><span><span class="sg">[${e[2]}]</span> ${e[3]}</span></li>`).join('');
+
+const _prevOnRoute2 = window.onRoute;
+window.onRoute = function(r,s){ if(typeof _prevOnRoute2==='function') _prevOnRoute2(r,s); if(r==='monitor') requestAnimationFrame(()=>setTab((s&&s[0])||curTab,false)); };
+
+/* ============================== coverage ============================== */
+const COVERAGE = [
+  ['HeaderBar · brand + tagline','Header (terse product line)'],
+  ['HeaderBar · Atlas / Worker / Rig lamps + tooltips','Header status strip → 04 Monitor / Health'],
+  ['HeaderBar · Sign in / Sign out + handle','Header'],
+  ['Dashboard · Disconnected / Server unreachable','Notice line under the rail'],
+  ['Dashboard · footer (values read from Atlas)','Footer'],
+  ['SpecConsole · spec textarea + char counter','01 Spec · editor'],
+  ['SpecConsole · Load selected project’s spec','01 Spec · editor toolbar'],
+  ['SpecConsole · Apply as spec change + status','01 Spec · editor toolbar / footer'],
+  ['SpecConsole · Factory I/O scene select','01 Spec · Scene'],
+  ['SpecConsole · Example select + Run Example (status, job)','01 Spec · Examples'],
+  ['SpecConsole · Generate PLC (status, job, blockers, sign-in)','01 Spec · Generate → 02'],
+  ['SpecConsole · Inject Fault & Improve Harness + Fault select','03 Rig'],
+  ['ProjectPicker · project list','01 Spec · History + rail project select'],
+  ['ProjectPicker · Follow newest','01 Spec · History + rail'],
+  ['ExecutionPanel · project id, status, harness v, attempts','02 Generate · header meta'],
+  ['ExecutionPanel · 10 pipeline stages (status, attempts, duration, sub-stages, error)','02 Generate · Pipeline ledger'],
+  ['ExecutionPanel · event log + all / warn+ / errors','02 Generate · Event log (+ 04 Monitor / Logs)'],
+  ['PlcProgram · version select, origin, harness v, time','02 Generate · Program'],
+  ['PlcProgram · Source / Diff, .st download, source hash','02 Generate · Program'],
+  ['ResultsCard · Compilation (preflight, OpenPLC, expandable log)','02 Generate · Compile'],
+  ['ResultsCard · Independent tests (counts, run, hidden tests)','02 Generate · Independent tests'],
+  ['TestTimeline · step chart, assertions, chart/table','02 Generate · expand a test'],
+  ['ResultsCard · Requirement verdicts (+ unsupported)','02 Generate · Requirement verdicts'],
+  ['ResultsCard · Latest diagnosis (summary, causes, fix, trace)','02 Generate · Latest diagnosis'],
+  ['SimulationPanel · Open live 3D view (Amazon DCV)','03 Rig · strip header'],
+  ['SimulationPanel · rig id, Factory I/O, OpenPLC (reachable, running, detail), checked','03 Rig · Rig zone (+ 04 Monitor / Health)'],
+  ['SimulationPanel · scene on the rig (verified, mismatch note)','03 Rig · Rig zone + Details'],
+  ['SimulationPanel · forced signals','03 Rig · Details + 04 Monitor / IO'],
+  ['SimulationPanel · sensor / actuator tag values (address, kind, NC, FORCED)','04 Monitor / IO + 3D labels'],
+  ['SimulationPanel · fault injections (tag := value, read back, applied, released)','03 Rig · Details'],
+  ['SpecConsole · Inject Fault & Improve Harness + Fault select + status','03 Rig · Fault injection zone'],
+  ['(new) operator panel Start / Stop / Reset / E-stop / Auto, lamps, counter','03 Rig · Panel zone (mock sim only)'],
+  ['SimulationPanel · Sensors / Actuators / unregistered tag rows with live values','04 Monitor / IO (filter all / in / out / forced; click → 3D focus)'],
+  ['HeaderBar lamps detail (Atlas db, worker id/host/pid/job, rig FIO/PLC)','04 Monitor / Health'],
+  ['LongHorizonCard · worker (id, host, pid, heartbeat, current job, more workers)','04 Monitor / Health'],
+  ['LongHorizonCard · current / last job (type, status, id, resumed-from, claimed, heartbeat, attempts, times, project, error, queued)','04 Monitor / Health'],
+  ['LongHorizonCard · stage checkpoints (12 raw stages)','04 Monitor / Health'],
+  ['LongHorizonCard · Interrupt Worker / Resume from MongoDB + last command','04 Monitor / Health'],
+  ['RsiCard · active harness (version, KEPT, parent, rationale, rules, settings)','04 Monitor / Self-improvement'],
+  ['RsiCard · latest proposal (provenance, verdict, from→candidate, rationale, expected effect, config diff, guardrails)','04 Monitor / Self-improvement'],
+  ['RsiCard · benchmark gate parent vs candidate (8 metrics, Δ), gate note, cited runs, Raindrop events, benchmark count','04 Monitor / Self-improvement'],
+  ['RsiCard · harness history (version, rationale, parent, rules, scored, verdict)','04 Monitor / Self-improvement'],
+  ['(new) score trend chart + improved yes/no headline','04 Monitor / Self-improvement'],
+  ['AblationCard · in progress / incomplete, bare vs v0 vs evolved table, rows, run/manifest/models, .json','04 Monitor / Ablation'],
+  ['ExecutionPanel event log (also)','04 Monitor / Logs + worker command log']
+];
+function renderCoverage(){ $('covBody').innerHTML = COVERAGE.map(r=>`<tr><td>${r[0]}</td><td class="m">${r[1]}</td></tr>`).join(''); }
+
+/* ============================== boot ============================== */
+renderCoverage(); updateSpec();
+skeletonHistory(); setTimeout(renderProjects, RM?0:650);
+show(location.hash.slice(1));
+
+/* ============================== 3D layer (factory3d.js owned by another agent) ============================== */
+window.FACTORY = null;
+function applyShot(r){ try{ window.FACTORY && window.FACTORY.setShot(({spec:'overview',generate:'descend',rig:'sensors',monitor:'monitor'})[r]||'overview'); }catch(e){ console.warn('setShot failed',e); } }
+function focusTag(name){ try{ window.FACTORY && window.FACTORY.focusTag(name); }catch(e){} }
+</script>
+<script type="module">
+// Guarded: if ./factory3d.js is missing or fails (e.g. Chrome blocks module imports over file://), fall back to a static grid.
+const host = document.getElementById('world');
+if (new URLSearchParams(location.search).has('embed')) document.body.classList.add('embed');
+try {
+  const m = await import('./factory3d.js');
+  window.FACTORY = m.createFactory(host, { reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches });
+  applyShot(document.body.dataset.route || 'spec');
+} catch (e) {
+  console.warn('[prototype] factory3d.js unavailable, using static grid:', e && e.message);
+  host.classList.add('fallback');
+  const hint = document.getElementById('rigEmpty'); if (hint) hint.hidden = false;
+}
+</script>
+</body>
+</html>
