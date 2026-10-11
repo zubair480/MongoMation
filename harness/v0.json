@@ -1,0 +1,31 @@
+{
+  "version": 0,
+  "parent": null,
+  "rules": [],
+  "context": {
+    "lessons_k": 3,
+    "retrieve_similar_failures": false,
+    "failures_k": 0,
+    "include_previous_attempt": true
+  },
+  "workflow": {
+    "state_machine_before_code": false,
+    "preflight_compile": true,
+    "repair_budget": 2,
+    "module_split_threshold": 8,
+    "run_regression_tests": true
+  },
+  "repair": {
+    "strategy": "full_rewrite",
+    "isolate_failing_requirements": false
+  },
+  "routing": {
+    "requirements": "fast",
+    "codegen": "fast",
+    "critic": "strong",
+    "repair": "fast",
+    "escalate_after_failures": 0
+  },
+  "verdict": "kept",
+  "rationale": "Baseline (v0): engineering loop with independent tests, no learned rules."
+}

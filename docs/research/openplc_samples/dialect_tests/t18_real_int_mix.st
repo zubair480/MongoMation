@@ -1,0 +1,13 @@
+PROGRAM main
+  VAR
+    r : REAL; i : INT := 3;
+  END_VAR
+  r := i * 2.5;
+END_PROGRAM
+
+CONFIGURATION Config0
+  RESOURCE Res0 ON PLC
+    TASK task0(INTERVAL := T#20ms,PRIORITY := 0);
+    PROGRAM instance0 WITH task0 : main;
+  END_RESOURCE
+END_CONFIGURATION

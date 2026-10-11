@@ -1,0 +1,13 @@
+{
+  "name": "@mongomation/checks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Independent validator: test primitives, plan builder, runner and grader. Agents never import this package.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@mongomation/types": "0.1.0"
+  }
+}

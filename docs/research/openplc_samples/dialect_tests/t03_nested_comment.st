@@ -1,0 +1,13 @@
+PROGRAM main
+  VAR
+    a : BOOL; (* outer (* inner *) still outer *)
+  END_VAR
+  a := NOT a;
+END_PROGRAM
+
+CONFIGURATION Config0
+  RESOURCE Res0 ON PLC
+    TASK task0(INTERVAL := T#20ms,PRIORITY := 0);
+    PROGRAM instance0 WITH task0 : main;
+  END_RESOURCE
+END_CONFIGURATION

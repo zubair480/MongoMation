@@ -1,0 +1,17 @@
+{
+  "note": "Prewritten example specifications for the Run Example button. Only the spec text is prewritten; requirements, I/O binding, PLC code, compilation and tests are produced live on every run.",
+  "examples": [
+    {
+      "id": "conveyor-jam",
+      "title": "Entry conveyor with start/stop, e-stop and jam protection",
+      "sceneId": "sorting-by-height-basic",
+      "text": "Control the entry conveyor of the sorting station. Pressing Start runs the entry conveyor and turns on the Start light; the conveyor keeps running after Start is released until Stop is pressed, and Stop always wins. The Emergency stop must stop the conveyor immediately. Jam protection: if the pallet sensor stays active for more than 5 seconds while the conveyor runs, stop the conveyor and latch the Stop light as a fault lamp. Reset clears the fault only once the pallet sensor is clear, and the conveyor must not restart until Start is pressed again."
+    },
+    {
+      "id": "sorting",
+      "title": "Height sorting with lane jam protection",
+      "sceneId": "sorting-by-height-basic",
+      "text": "Automate the sorting station: Start/Stop buttons run the line (Stop always wins, Emergency stop stops everything). Send tall boxes (high sensor) to the right lane and short boxes to the left lane using the chain transfer. If the left exit eye stays blocked for more than 3 seconds, stop the left conveyor and light the Reset light as a fault lamp until Reset is pressed with the eye clear."
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+PROGRAM main
+  VAR CONSTANT
+    K : INT := 5;
+  END_VAR
+  VAR
+    i : INT;
+  END_VAR
+  K := 6;
+  i := K;
+END_PROGRAM
+
+CONFIGURATION Config0
+  RESOURCE Res0 ON PLC
+    TASK task0(INTERVAL := T#20ms,PRIORITY := 0);
+    PROGRAM instance0 WITH task0 : main;
+  END_RESOURCE
+END_CONFIGURATION

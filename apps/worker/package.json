@@ -1,0 +1,17 @@
+{
+  "name": "@mongomation/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Engineering worker: harness, agents, OpenPLC + Factory I/O clients, RSI meta-harness. Runs inside the AWS VPC next to the rig.",
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.133.0",
+    "@mongomation/checks": "0.1.0",
+    "@mongomation/types": "0.1.0",
+    "fflate": "0.8.2",
+    "mongodb": "7.7.0",
+    "raindrop-ai": "1.0.1",
+    "undici": "7.16.0",
+    "zod": "4.6.5"
+  }
+}

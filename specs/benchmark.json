@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "note": "Frozen benchmark. Hash is recorded in Atlas (benchmark_manifests) on first use; any later edit is refused. Train cases feed the RSI gate; held-out cases are only for the bare vs v0 vs vN ablation and never write memory. `requirements` are the ground truth used for grading and are never shown to agents.",
+  "cases": [
+    {
+      "id": "t1-start-stop-light",
+      "split": "train",
+      "sceneId": "sorting-by-height-basic",
+      "specText": "Pressing Start runs the entry conveyor and it keeps running until Stop is pressed; Stop wins over Start. The Start light shows when the conveyor is running.",
+      "requirements": [
+        { "id": "R1", "kind": "start_stop", "text": "Start/Stop seal-in on the entry conveyor, stop dominates", "roles": {}, "params": {}, "bindings": { "start": "Start", "stop": "Stop", "actuator": "Conveyor entry" }, "support": "supported" },
+        { "id": "R2", "kind": "indicator", "text": "Start light on while running", "roles": {}, "params": {}, "bindings": { "start": "Start", "stop": "Stop", "indicator": "Start light" }, "support": "supported" }
+      ]
+    },
+    {
+      "id": "t2-estop",
+      "split": "train",
+      "sceneId": "sorting-by-height-basic",
+      "specText": "Start and Stop buttons control the entry conveyor (Stop always wins). The Emergency stop must stop the conveyor immediately and keep it stopped while it is pressed.",
+      "requirements": [
+        { "id": "R1", "kind": "start_stop", "text": "Start/Stop seal-in", "roles": {}, "params": {}, "bindings": { "start": "Start", "stop": "Stop", "actuator": "Conveyor entry" }, "support": "supported" },
+        { "id": "R2", "kind": "estop", "text": "Emergency stop de-energizes the conveyor", "roles": {}, "params": {}, "bindings": { "estop": "Emergency stop", "actuator": "Conveyor entry", "start": "Start" }, "support": "supported" }
+      ]
+    },
+    {
+      "id": "t3-jam-latch",
+      "split": "train",
+      "sceneId": "sorting-by-height-basic",
+      "specText": "Start/Stop control the entry conveyor. If the pallet sensor stays active for more than 4 seconds while running, it is a jam: stop the conveyor and latch the Stop light as a fault lamp until Reset is pressed.",
+      "requirements": [
+        { "id": "R1", "kind": "start_stop", "text": "Start/Stop seal-in", "roles": {}, "params": {}, "bindings": { "start": "Start", "stop": "Stop", "actuator": "Conveyor entry" }, "support": "supported" },
+        { "id": "R2", "kind": "timer_timeout", "text": "Jam after 4 s on the pallet sensor stops the conveyor and lights the fault lamp", "roles": {}, "params": { "timeoutMs": 4000 }, "bindings": { "sensor": "Pallet sensor", "actuator": "Conveyor entry", "fault_indicator": "Stop light", "start": "Start", "stop": "Stop" }, "support": "supported" },
+        { "id": "R3", "kind": "fault_latch", "text": "Fault lamp latched until Reset", "roles": {}, "params": { "timeoutMs": 4000 }, "bindings": { "cause": "Pallet sensor", "fault_indicator": "Stop light", "reset": "Reset", "start": "Start", "actuator": "Conveyor entry" }, "support": "supported" }
+      ]
+    },
+    {
+      "id": "t4-reset-guard",
+      "split": "train",
+      "sceneId": "sorting-by-height-basic",
+      "specText": "Start/Stop run the left exit conveyor. If the left exit eye is blocked for more than 3 seconds, stop the left conveyor and turn on the Reset light. Reset only clears the fault once the eye is clear again, and the conveyor waits for a new Start after a reset.",
+      "requirements": [
+        { "id": "R1", "kind": "start_stop", "text": "Start/Stop seal-in on the left conveyor", "roles": {}, "params": {}, "bindings": { "start": "Start", "stop": "Stop", "actuator": "Conveyor left" }, "support": "supported" },
+        { "id": "R2", "kind": "timer_timeout", "text": "Blocked left exit for 3 s stops the conveyor and lights the Reset light", "roles": {}, "params": { "timeoutMs": 3000 }, "bindings": { "sensor": "At left exit", "actuator": "Conveyor left", "fault_indicator": "Reset light", "start": "Start", "stop": "Stop" }, "support": "supported" },
+        { "id": "R3", "kind": "reset_precondition", "text": "Reset ignored while the eye is still blocked", "roles": {}, "params": { "timeoutMs": 3000 }, "bindings": { "cause": "At left exit", "fault_indicator": "Reset light", "reset": "Reset", "start": "Start", "actuator": "Conveyor left" }, "support": "supported" },
+        { "id": "R4", "kind": "no_auto_restart", "text": "No restart without Start after reset", "roles": {}, "params": { "timeoutMs": 3000 }, "bindings": { "start": "Start", "actuator": "Conveyor left", "reset": "Reset", "cause": "At left exit" }, "support": "supported" }
+      ]
+    },
+    {
+      "id": "h1-interlock",
+      "split": "heldout",
+      "sceneId": "sorting-by-height-basic",
+      "specText": "Start/Stop control the entry conveyor. Interlock: the entry conveyor must stop whenever a box is waiting at the pallet sensor, and run again when it clears.",
+      "requirements": [
+        { "id": "R1", "kind": "start_stop", "text": "Start/Stop seal-in", "roles": {}, "params": {}, "bindings": { "start": "Start", "stop": "Stop", "actuator": "Conveyor entry" }, "support": "supported" },
+        { "id": "R2", "kind": "interlock", "text": "Conveyor held off while the pallet sensor is active", "roles": {}, "params": {}, "bindings": { "actuator": "Conveyor entry", "blocker": "Pallet sensor", "start": "Start", "stop": "Stop" }, "support": "supported" }
+      ]
+    },
+    {
+      "id": "h2-full-safety",
+      "split": "heldout",
+      "sceneId": "sorting-by-height-basic",
+      "specText": "Start runs the entry conveyor and the Start light until Stop (Stop wins); the Emergency stop stops it at once. If the pallet sensor stays active for more than 5 s while running, stop and latch the Stop light as a fault; Reset clears it only when the sensor is clear, and a new Start is needed afterwards.",
+      "requirements": [
+        { "id": "R1", "kind": "start_stop", "text": "Start/Stop seal-in", "roles": {}, "params": {}, "bindings": { "start": "Start", "stop": "Stop", "actuator": "Conveyor entry" }, "support": "supported" },
+        { "id": "R2", "kind": "indicator", "text": "Start light while running", "roles": {}, "params": {}, "bindings": { "start": "Start", "stop": "Stop", "indicator": "Start light" }, "support": "supported" },
+        { "id": "R3", "kind": "estop", "text": "E-stop stops the conveyor", "roles": {}, "params": {}, "bindings": { "estop": "Emergency stop", "actuator": "Conveyor entry", "start": "Start" }, "support": "supported" },
+        { "id": "R4", "kind": "timer_timeout", "text": "5 s jam stops conveyor and lights fault", "roles": {}, "params": { "timeoutMs": 5000 }, "bindings": { "sensor": "Pallet sensor", "actuator": "Conveyor entry", "fault_indicator": "Stop light", "start": "Start", "stop": "Stop" }, "support": "supported" },
+        { "id": "R5", "kind": "reset_precondition", "text": "Reset ignored while jammed", "roles": {}, "params": { "timeoutMs": 5000 }, "bindings": { "cause": "Pallet sensor", "fault_indicator": "Stop light", "reset": "Reset", "start": "Start", "actuator": "Conveyor entry" }, "support": "supported" },
+        { "id": "R6", "kind": "no_auto_restart", "text": "New Start needed after reset", "roles": {}, "params": { "timeoutMs": 5000 }, "bindings": { "start": "Start", "actuator": "Conveyor entry", "reset": "Reset", "cause": "Pallet sensor" }, "support": "supported" }
+      ]
+    }
+  ]
+}

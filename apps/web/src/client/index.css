@@ -1,0 +1,179 @@
+@import "tailwindcss";
+
+@source "./";
+
+/* MongoMation design tokens. Rationale and usage rules: DESIGN.md. */
+@theme {
+  --font-display: "Chakra Petch", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* plant: control-room neutrals (page, panels, hairlines, ink) */
+  --color-plant-950: #06080a;
+  --color-plant-925: #080b0e;
+  --color-plant-900: #0c1014;
+  --color-plant-850: #10151a;
+  --color-plant-800: #151c22;
+  --color-plant-750: #1a222a;
+  --color-plant-700: #222c35;
+  --color-plant-600: #2e3a45;
+  --color-plant-500: #475663;
+  --color-plant-400: #73838f;
+  --color-plant-300: #9aa8b2;
+  --color-plant-200: #c2ccd3;
+  --color-plant-100: #e4eaee;
+  --color-plant-50: #f4f7f9;
+
+  /* go: start / normal / verified (IEC 60073 green) */
+  --color-go-300: #8ef0b0;
+  --color-go-400: #3ad671;
+  --color-go-500: #16b455;
+  --color-go-600: #0e8f43;
+
+  /* stop: fault / failed / stop commands (red) */
+  --color-stop-300: #fca5a5;
+  --color-stop-400: #f26363;
+  --color-stop-500: #d93b3b;
+  --color-stop-600: #b42a2a;
+
+  /* caution: abnormal / blocked / forced (amber) */
+  --color-caution-300: #fcd57a;
+  --color-caution-400: #fab219;
+  --color-caution-500: #e39a00;
+  --color-caution-600: #b87a00;
+
+  /* flow: running / information / links (cyan) */
+  --color-flow-300: #8fdcff;
+  --color-flow-400: #3cc3f5;
+  --color-flow-500: #0ea5e9;
+  --color-flow-600: #0b84bb;
+
+  /* meta: the self-improving harness (violet) */
+  --color-meta-300: #cbbfff;
+  --color-meta-400: #a594f9;
+  --color-meta-500: #8b74f0;
+
+  /* leaf: MongoDB Atlas identity (connection badge, brand mark) */
+  --color-leaf-400: #00ed64;
+  --color-leaf-500: #00c853;
+
+  /* chart series: categorical slots 1-2, validated on plant-900 (scripts/validate_palette.js, dark) */
+  --color-series-sensor: #3987e5;
+  --color-series-actuator: #d95926;
+
+  --animate-pulse-dot: pulse-dot 1.4s ease-in-out infinite;
+  --animate-rise: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-stripes: stripes 0.9s linear infinite;
+  --animate-sweep: sweep 2.4s ease-in-out infinite;
+
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.35;
+      transform: scale(0.78);
+    }
+  }
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes stripes {
+    from {
+      background-position: 0 0;
+    }
+    to {
+      background-position: 28px 0;
+    }
+  }
+
+  @keyframes sweep {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
+    }
+  }
+}
+
+@layer base {
+  /* Base UI: a stacking context at the root so portalled popups (Tooltip, Select, ...) layer above content. */
+  html {
+    isolation: isolate;
+    color-scheme: dark;
+  }
+
+  body {
+    position: relative;
+    background-color: var(--color-plant-950);
+    color: var(--color-plant-100);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--color-flow-400) 35%, transparent);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-plant-600) transparent;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+/* Page plane: blueprint grid over two faint glows (cyan = process, green = Atlas). */
+@utility bg-blueprint {
+  background-color: var(--color-plant-950);
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.028) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.028) 1px, transparent 1px),
+    radial-gradient(1100px 520px at 12% -8%, color-mix(in oklab, var(--color-flow-500) 11%, transparent), transparent 62%),
+    radial-gradient(900px 480px at 100% -4%, color-mix(in oklab, var(--color-leaf-500) 7%, transparent), transparent 60%);
+  background-size:
+    32px 32px,
+    32px 32px,
+    auto,
+    auto;
+}
+
+/* Safety marking for fault injection and FORCED signals. */
+@utility hazard {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in oklab, var(--color-caution-400) 85%, transparent) 0 7px,
+    transparent 7px 14px
+  );
+}
+
+/* Panel surface with a faint top highlight (machined metal edge). */
+@utility panel-surface {
+  background-color: color-mix(in oklab, var(--color-plant-900) 92%, transparent);
+  border: 1px solid var(--color-plant-700);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.035),
+    0 10px 30px -18px rgb(0 0 0 / 0.9);
+  backdrop-filter: blur(6px);
+}

@@ -1,0 +1,14 @@
+PROGRAM main
+  VAR i : INT; w : WORD; b : BYTE; d : DINT; END_VAR
+  i := INT#5 + 16#0F + 2#1010 + 8#17;
+  w := WORD#16#FFFF;
+  b := 16#A5;
+  d := DINT#100000;
+END_PROGRAM
+
+CONFIGURATION Config0
+  RESOURCE Res0 ON PLC
+    TASK task0(INTERVAL := T#20ms,PRIORITY := 0);
+    PROGRAM instance0 WITH task0 : main;
+  END_RESOURCE
+END_CONFIGURATION
