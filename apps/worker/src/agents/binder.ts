@@ -7,7 +7,7 @@ import { z } from "zod";
 import { complete } from "../tools/llm.ts";
 
 /** Roles that must be PLC inputs (sensors/buttons) vs PLC outputs (actuators/lights). */
-export const SENSOR_ROLES = new Set(["start", "stop", "reset", "estop", "sensor", "blocker", "cause", "classifier"]);
+export const SENSOR_ROLES = new Set(["start", "stop", "reset", "estop", "sensor", "blocker", "cause", "cause_clear", "classifier"]);
 export const ACTUATOR_ROLES = new Set(["actuator", "diverter", "fault_indicator", "indicator"]);
 
 const Binding = z.object({

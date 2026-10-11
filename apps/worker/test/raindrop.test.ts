@@ -25,6 +25,7 @@ function fakeSdk() {
     resumeInteraction: (id: string) => (calls.push(["resumeInteraction", id]), interaction(id)),
     trackAi: (e: { eventId: string }) => (calls.push(["trackAi", e]), e.eventId),
     trackSignal: (s: unknown) => void calls.push(["trackSignal", s]),
+    selfDiagnose: (d: unknown) => void calls.push(["selfDiagnose", d]),
     setUserDetails: (u: unknown) => void calls.push(["setUserDetails", u]),
     close: async () => void calls.push(["close"]),
   } as unknown as RaindropClient;
@@ -78,7 +79,7 @@ test("job interaction: identify, feature flags, sub-agent per model call with a 
   assert.equal(f.of("finish").length, 1);
 });
 
-test("per-test cloud events off (default, free-tier budget): the test is only a span on the job", () => {
+test("per-test cloud events off (RAINDROP_CLOUD_PER_TEST=0): the test is only a span on the job", () => {
   const f = fakeSdk();
   const t = new RaindropTelemetry("wk", f.client, { perTestCloud: false });
   const job = t.beginRun("p5", { event: "engineering_job", input: "spec" });
@@ -96,20 +97,58 @@ test("per-test cloud events off (default, free-tier budget): the test is only a 
   assert.equal(f.of("trackAi").length, 1);
 });
 
-test("per-test cloud events default off when RAINDROP_CLOUD_PER_TEST is unset", () => {
+test("per-test cloud events default ON (Pro plan) and RAINDROP_CLOUD_PER_TEST=0 turns them off", () => {
   const prev = process.env.RAINDROP_CLOUD_PER_TEST;
-  delete process.env.RAINDROP_CLOUD_PER_TEST;
   try {
+    delete process.env.RAINDROP_CLOUD_PER_TEST;
     const f = fakeSdk();
     const t = new RaindropTelemetry("wk", f.client);
-    t.beginRun("p6", { event: "engineering_job", input: "spec" });
-    t.tool({ name: "simulator_test", runId: "p6", input: { testId: "R1" } }, { ok: true, summary: "ok", durationMs: 1 });
-    t.tool({ name: "simulator_test", runId: "unknown", input: { testId: "R2" } }, { ok: false, summary: "bad", durationMs: 1 });
-    assert.equal(f.of("trackAi").length, 0);
-    assert.equal(f.of("trackTool").length, 1);
+    const job = t.beginRun("p6", { event: "engineering_job", input: "spec" });
+    const id = t.tool({ name: "simulator_test", runId: "p6", input: { testId: "R1" } }, { ok: true, summary: "ok", durationMs: 1 });
+    assert.ok(id && id !== job, "own event per test");
+    assert.equal(f.of("trackAi").length, 1);
+    assert.equal(f.of("subagent").length, 1, "linked to the job as a sub-agent");
+    assert.equal(f.of("trackTool").length, 1, "still a span on the job");
+
+    process.env.RAINDROP_CLOUD_PER_TEST = "0";
+    const g = fakeSdk();
+    const u = new RaindropTelemetry("wk", g.client);
+    u.beginRun("p7", { event: "engineering_job", input: "spec" });
+    u.tool({ name: "simulator_test", runId: "p7", input: { testId: "R1" } }, { ok: true, summary: "ok", durationMs: 1 });
+    u.tool({ name: "simulator_test", runId: "unknown", input: { testId: "R2" } }, { ok: false, summary: "bad", durationMs: 1 });
+    assert.equal(g.of("trackAi").length, 0);
+    assert.equal(g.of("trackTool").length, 1);
   } finally {
-    if (prev !== undefined) process.env.RAINDROP_CLOUD_PER_TEST = prev;
+    if (prev === undefined) delete process.env.RAINDROP_CLOUD_PER_TEST;
+    else process.env.RAINDROP_CLOUD_PER_TEST = prev;
   }
+});
+
+test("typed signals: critic feedback (comment), repair edit (after), self-diagnostics, refusal", () => {
+  const f = fakeSdk();
+  const t = new RaindropTelemetry("wk", f.client, { perTestCloud: false });
+  const job = t.beginRun("p8", { event: "engineering_job", input: "spec" });
+  t.signal({ runId: "p8", name: "critic_verdict", type: "feedback", sentiment: "NEGATIVE", eventId: "codegen-evt", comment: "R1: latch missing -> add seal-in", properties: { attempt: 0 } });
+  t.signal({ runId: "p8", name: "repair_edit", type: "edit", sentiment: "NEGATIVE", eventId: "codegen-evt", after: "PROGRAM fixed", properties: { diff: "+x" } });
+  t.signal({ runId: "p8", name: "project_verified" });
+  const sigs = f.of("trackSignal").map((c) => c[1] as Record<string, unknown>);
+  assert.deepEqual(sigs[0], { eventId: "codegen-evt", name: "critic_verdict", sentiment: "NEGATIVE", properties: { attempt: "0" }, type: "feedback", comment: "R1: latch missing -> add seal-in" });
+  assert.deepEqual(sigs[1], { eventId: "codegen-evt", name: "repair_edit", sentiment: "NEGATIVE", properties: { diff: "+x" }, type: "edit", after: "PROGRAM fixed" });
+  assert.equal(sigs[2].type, undefined, "untyped signals stay default");
+  assert.equal(sigs[2].eventId, job);
+
+  t.selfDiagnose({ runId: "p8", eventId: "binder-evt", category: "capability_gap", source: "binder", description: "R3: no level sensor", properties: { requirement_id: "R3" } });
+  t.selfDiagnose({ runId: "p8", category: "root_cause", source: "critic", description: "x" });
+  t.selfDiagnose({ runId: "nope", category: "root_cause", source: "critic", description: "dropped: no event" });
+  const diags = f.of("selfDiagnose").map((c) => c[1] as Record<string, unknown>);
+  assert.equal(diags.length, 2);
+  assert.deepEqual(diags[0], { eventId: "binder-evt", category: "capability_gap", source: "binder", description: "R3: no level sensor", properties: { run_id: "p8", requirement_id: "R3" } });
+  assert.equal(diags[1].eventId, job, "defaults to the job event");
+
+  // A model refusal is also a self-diagnostic on the failed call's event.
+  t.beginAi({ agent: "codegen", model: "m", runId: "p8", input: "x" }).fail(new Error("m declined the codegen request"));
+  const refusal = f.of("selfDiagnose")[2][1] as { category: string; source: string };
+  assert.deepEqual([refusal.category, refusal.source], ["refusal", "codegen"]);
 });
 
 test("a skipped tool step (preflight unavailable) is a non-error span", () => {

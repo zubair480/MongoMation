@@ -26,20 +26,29 @@ function canvasTex(w, h, draw) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
 }
 
+function drawHmi(c, w, h, def) {
+  c.fillStyle = '#0f1419'; c.fillRect(0, 0, w, h);
+  c.fillStyle = def.state === 'running' ? '#ff5a1f' : '#6b7079'; c.font = '600 22px ui-monospace,monospace'; c.fillText(String(def.state).toUpperCase(), 18, 40);
+  c.fillStyle = '#9aa3ad'; c.font = '18px ui-monospace,monospace'; c.fillText(String(def.plc).slice(0, 22), 18, 78); c.fillText(String(def.scene).slice(0, 20), 18, 108);
+}
+
 // ---- cabinet dims (metres) ----
 const CW = 0.8, CH = 2.0, CD = 0.5, PL = 0.1;
 
+// Only CAB-01 is wired to the real rig; its state/plc/scene are filled from live data via room.setLive().
+// Every other cabinet is decorative and says so: "not connected", lamps off.
+const NC = 'not connected';
 export const CABINETS = [
-  { id: 'CAB-01', machine: 'Sorting station', scene: 'sorting-by-height-basic', plc: 'OpenPLC · v4', state: 'running', live: true, ex: 'sorting' },
-  { id: 'CAB-02', machine: 'Entry conveyor', scene: 'sorting-by-height-basic', plc: 'OpenPLC · v2', state: 'fault', ex: 'jam' },
-  { id: 'CAB-03', machine: 'Box counter', ex: 'count', scene: '—', plc: 'unassigned', state: 'idle' },
-  { id: 'CAB-04', machine: 'Pick & place', scene: '—', plc: 'unassigned', state: 'idle' },
-  { id: 'CAB-05', machine: 'Buffer lane', scene: '—', plc: 'unassigned', state: 'idle' },
-  { id: 'CAB-06', machine: 'Assembler', scene: '—', plc: 'unassigned', state: 'idle' },
-  { id: 'CAB-07', machine: 'Separator', scene: '—', plc: 'unassigned', state: 'idle' },
-  { id: 'CAB-08', machine: 'Elevator', scene: '—', plc: 'unassigned', state: 'idle' },
-  { id: 'MCC-A', machine: 'Motor control', scene: '—', plc: 'none', state: 'running', blank: true },
-  { id: 'MCC-B', machine: 'Motor control', scene: '—', plc: 'none', state: 'running', blank: true },
+  { id: 'CAB-01', machine: 'Sorting station', scene: '—', plc: 'OpenPLC · checking…', state: 'offline', live: true, ex: 'sorting' },
+  { id: 'CAB-02', machine: 'Entry conveyor', scene: '—', plc: NC, state: NC },
+  { id: 'CAB-03', machine: 'Box counter', scene: '—', plc: NC, state: NC },
+  { id: 'CAB-04', machine: 'Pick & place', scene: '—', plc: NC, state: NC },
+  { id: 'CAB-05', machine: 'Buffer lane', scene: '—', plc: NC, state: NC },
+  { id: 'CAB-06', machine: 'Assembler', scene: '—', plc: NC, state: NC },
+  { id: 'CAB-07', machine: 'Separator', scene: '—', plc: NC, state: NC },
+  { id: 'CAB-08', machine: 'Elevator', scene: '—', plc: NC, state: NC },
+  { id: 'MCC-A', machine: 'Motor control', scene: '—', plc: 'none', state: NC, blank: true },
+  { id: 'MCC-B', machine: 'Motor control', scene: '—', plc: 'none', state: NC, blank: true },
 ];
 
 export function createRoom(host, hooks = {}) {
@@ -89,12 +98,12 @@ export function createRoom(host, hooks = {}) {
   [-2.2, 1.4].forEach(lz => { const ladder = new THREE.Group(); ladder.position.set(.2, 2.75, lz);
     [-.2, .2].forEach(z => { const r = new THREE.Mesh(new THREE.BoxGeometry(10, .06, .03), MAT.rail); r.position.z = z; ladder.add(r); });
     for (let i = 0; i < 25; i++) { const s = new THREE.Mesh(new THREE.BoxGeometry(.03, .02, .4), MAT.rail); s.position.x = -4.9 + i * .4; ladder.add(s); }
-    for (let i = 0; i < 6; i++) { const c = new THREE.Mesh(new THREE.CylinderGeometry(.018, .018, 10, 8), i % 3 ? MAT.cable : MAT.wireBlue); c.rotation.z = Math.PI / 2; c.position.set(0, .05, -.15 + i * .06); ladder.add(c); }
+    for (let i = 0; i < 6; i++) { const c = new THREE.Mesh(new THREE.CylinderGeometry(.018, .018, 10, 8), MAT.cable); c.rotation.z = Math.PI / 2; c.position.set(0, .05, -.15 + i * .06); ladder.add(c); }
     [-4, -1, 2, 4.6].forEach(x => { const h = new THREE.Mesh(new THREE.BoxGeometry(.02, .5, .02), MAT.rail); h.position.set(x, .27, 0); ladder.add(h); });
     scene.add(ladder); mergeStatic(ladder); });
 
   const props = buildProps(scene, { backZ: -3.525, leftX: -5.225 });
-  const hall = buildHall(scene); // factory hall + live production line around the room
+  const hall = buildHall(scene); // decorative factory hall + production line around the room (not driven by the rig)
   window.__room3d = { renderer, scene, camera };
   // ---- cabinets ----
   const pickables = [], cabinets = [];
@@ -145,8 +154,9 @@ export function createRoom(host, hooks = {}) {
     });
     for (let i = 0; i < 6; i++) { const l = new THREE.Mesh(new THREE.BoxGeometry(.3, .008, .006), MAT.gasket); l.position.set(CW / 2, .18 + i * .025, .027); hinge.add(l); }
     // small HMI window on door (glass)
+    let hmiTex = null;
     if (!def.blank) {
-      const hmiTex = canvasTex(256, 160, (c, w, h) => { c.fillStyle = '#0f1419'; c.fillRect(0, 0, w, h); c.fillStyle = '#ff5a1f'; c.font = '600 22px ui-monospace,monospace'; c.fillText(def.state.toUpperCase(), 18, 40); c.fillStyle = '#9aa3ad'; c.font = '18px ui-monospace,monospace'; c.fillText(def.plc, 18, 78); c.fillText(def.scene.slice(0, 20), 18, 108); });
+      hmiTex = canvasTex(256, 160, (c, w, h) => drawHmi(c, w, h, def));
       const hmi = new THREE.Mesh(new THREE.PlaneGeometry(.22, .14), new THREE.MeshStandardMaterial({ map: hmiTex, emissive: 0xffffff, emissiveMap: hmiTex, emissiveIntensity: .5, roughness: .2 }));
       hmi.position.set(CW / 2, CH * .68, .026); hinge.add(hmi);
     }
@@ -155,7 +165,7 @@ export function createRoom(host, hooks = {}) {
     outline.position.y = (CH + PL) / 2; g.add(outline);
     // floor badge label
     const el = document.createElement('div'); el.className = 'cab-tag';
-    el.innerHTML = `<span class="dot ${def.state}"></span><b>${def.id}</b><span>${def.machine}</span>`;
+    el.innerHTML = `<span class="dot ${String(def.state).replace(/ /g, '-')}"></span><b>${def.id}</b><span>${def.machine}</span>`;
     const tag = new CSS2DObject(el); tag.position.set(0, PL + CH + .45, 0); g.add(tag);
 
     g.traverse(m => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
@@ -164,7 +174,7 @@ export function createRoom(host, hooks = {}) {
     hinge.userData.dynamic = inside.userData.dynamic = outline.userData.dynamic = true; mergeStatic(g);
     hinge.userData.dynamic = false; mergeStatic(hinge);
     inside.traverse(m => { if (m.isMesh) m.castShadow = false; }); // interior never shadows anything visible
-    const cab = { def, group: g, hinge, door, outline, inside, stack, pilots, plc, tag, open: 0, openGoal: 0, hover: 0 };
+    const cab = { def, group: g, hinge, door, outline, inside, stack, pilots, plc, tag, hmiTex, open: 0, openGoal: 0, hover: 0 };
     hinge.traverse(m => { if (m.isMesh) { m.userData.cab = cab; m.userData.part = 'door'; pickables.push(m); } });
     g.traverse(m => { if (m.isMesh && !m.userData.cab) { m.userData.cab = cab; m.userData.part = m.userData.part || 'body'; pickables.push(m); } });
     if (plc) plc.traverse(m => { if (m.isMesh) m.userData.part = 'plc'; });
@@ -223,16 +233,31 @@ export function createRoom(host, hooks = {}) {
   }
 
   // ---- state lamps ----
-  function lampsFor(cab, t) {
-    const s = cab.def.state, blink = Math.sin(t * 6) > 0;
-    const on = [s === 'running', s === 'idle', s === 'fault' && blink];
+  // Only real states light anything: running = green, stopped (OpenPLC reachable, not running) = amber.
+  // offline / not connected = all lamps off. No simulated faults.
+  function lampsFor(cab) {
+    const s = cab.def.state;
+    const on = [s === 'running', s === 'stopped', false];
     cab.stack.forEach((m, i) => m.material.emissiveIntensity = on[i] ? 2.4 : 0);
     cab.pilots.forEach((m, i) => m.material.emissiveIntensity = on[i] ? 2.2 : 0);
     if (cab.plc) {
-      const u = cab.plc.userData; u.cpuLeds[0].material.emissiveIntensity = s !== 'idle' ? 2.5 : 0;
-      u.cpuLeds[1].material.emissiveIntensity = s === 'fault' && blink ? 2.5 : 0;
-      u.ioMats.forEach((m, i) => m.emissiveIntensity = s === 'running' && Math.sin(t * (3 + i * 1.3) + i * 2) > .2 ? 2.2 : 0);
+      const u = cab.plc.userData; u.cpuLeds[0].material.emissiveIntensity = s === 'running' ? 2.5 : 0;
+      u.cpuLeds[1].material.emissiveIntensity = 0;
+      u.ioMats.forEach(m => m.emissiveIntensity = 0); // I/O LEDs are not wired to real tags: keep dark
     }
+  }
+
+  // Live data for the one real cabinet (CAB-01). Fields come from the dashboard query in RoomPage.
+  function setLive({ connected = false, openplcReachable = false, openplcRunning = false, version = null, sceneId = null } = {}) {
+    const cab = cabinets.find(c => c.def.live); if (!cab) return;
+    const d = cab.def;
+    d.state = !connected ? 'offline' : openplcRunning ? 'running' : openplcReachable ? 'stopped' : 'offline';
+    d.plc = !connected ? 'OpenPLC · no rig data' : !openplcReachable ? 'OpenPLC · unreachable' : `OpenPLC${version != null ? ` · v${version}` : ''}`;
+    d.scene = sceneId || '—';
+    if (cab.hmiTex) { const c = cab.hmiTex.image; drawHmi(c.getContext('2d'), c.width, c.height, d); cab.hmiTex.needsUpdate = true; }
+    cab.tag.element.innerHTML = `<span class="dot ${String(d.state).replace(/ /g, '-')}"></span><b>${d.id}</b><span>${d.machine}</span>`;
+    if (cab.plc) cab.plc.userData.lbl.element.innerHTML = `<b>PLC</b> MM-1214 · ${d.plc}<i>click to open</i>`;
+    if (selected === cab) hooks.onSelect && hooks.onSelect({ ...d });
   }
 
   // ---- camera flights (ThermalDesk pattern: legs with lift, holds, labels) ----
@@ -312,8 +337,8 @@ export function createRoom(host, hooks = {}) {
       cab.inside.visible = cab.open > .003 || cab.openGoal > 0; // interior only drawn while the door is (opening) open
       const hv = (hovered === cab && cab !== selected) ? 1 : 0; cab.hover += (hv - cab.hover) * (1 - Math.pow(.001, dt));
       cab.outline.material.opacity = cab.hover * .35;
-      cab.tag.element.classList.toggle('hidden', mode !== 'room' || !(cab.def.state !== 'idle' && !cab.def.blank || hovered === cab));
-      lampsFor(cab, t);
+      cab.tag.element.classList.toggle('hidden', mode !== 'room' || !(cab.def.live || hovered === cab));
+      lampsFor(cab);
     });
     renderer.render(scene, camera); css.render(scene, camera);
   }
@@ -322,5 +347,5 @@ export function createRoom(host, hooks = {}) {
   addEventListener('resize', () => { camera.aspect = W() / H(); camera.updateProjectionMatrix(); renderer.setSize(W(), H()); css.setSize(W(), H()); });
   // app port: dispose() stops the loop and frees the GL context when the React page unmounts
   const dispose = () => { disposed = true; renderer.dispose(); renderer.forceContextLoss && renderer.forceContextLoss(); host.innerHTML = ""; };
-  return { dispose, selectCabinet: id => selectCabinet(cabinets.find(c => c.def.id === id) || null), openPLC: () => selected && openPLC(selected), backOut, get mode() { return mode; } };
+  return { dispose, setLive, defs: CABINETS, selectCabinet: id => selectCabinet(cabinets.find(c => c.def.id === id) || null), openPLC: () => selected && openPLC(selected), backOut, get mode() { return mode; } };
 }

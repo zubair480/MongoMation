@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import type { HarnessConfig, HarnessScores } from "@mongomation/types";
 import { decide } from "../src/rsi/gate.ts";
 import { configDiff, guardrailViolations, stripMeta } from "../src/rsi/guardrails.ts";
-import { caseRow, score } from "../src/rsi/evolve.ts";
+import { caseRow, evidenceResultFilter, measuredProjectsFilter, score } from "../src/rsi/evolve.ts";
 
 const v0 = { ...JSON.parse(readFileSync(new URL("../../../harness/v0.json", import.meta.url), "utf8")), createdAt: "2026-10-11T00:00:00Z" } as HarnessConfig;
 const ok = { citedRunIdsExist: true };
@@ -93,5 +93,53 @@ describe("evaluation scoring with blocked tests", () => {
   it("a fully measured row reports zero blocked tests", () => {
     const clean = { ...r, lastSimRun: { results: [{ verdict: "passed", category: "functional" }], verdicts: [{ requirementId: "R1", status: "verified" }] } as never };
     assert.equal(score([caseRow(clean, reqs)]).tests_blocked, 0);
+  });
+});
+
+/** Minimal Mongo matcher for the operators the evidence filters use ($ne, $gte, $in, equality). */
+function matches(doc: Record<string, unknown>, filter: Record<string, unknown>): boolean {
+  return Object.entries(filter).every(([k, cond]) => {
+    const v = doc[k];
+    if (cond && typeof cond === "object" && !(cond instanceof Date) && !Array.isArray(cond)) {
+      const c = cond as Record<string, unknown>;
+      if ("$ne" in c && v === c.$ne) return false;
+      if ("$gte" in c && !(v instanceof Date && v.getTime() >= (c.$gte as Date).getTime())) return false;
+      if ("$in" in c && !(c.$in as unknown[]).includes(v)) return false;
+      return true;
+    }
+    return v === cond;
+  });
+}
+
+describe("collectEvidence window", () => {
+  const cutoff = new Date("2026-10-11T12:00:00Z");
+  const before = new Date("2026-10-11T09:00:00Z");
+  const after = new Date("2026-10-11T13:00:00Z");
+  const projects = [
+    { _id: "p-old", harnessVersion: 3, status: "failed", createdAt: before }, // created before cutoff, fails inside it
+    { _id: "p-new", harnessVersion: 3, status: "failed", createdAt: after },
+    { _id: "p-stale", harnessVersion: 3, status: "verified", createdAt: before }, // only pre-cutoff evidence
+  ];
+  const results = [
+    { projectId: "p-old", harnessVersion: 3, split: "train", verdict: "failed", startedAt: after },
+    { projectId: "p-new", harnessVersion: 3, split: "train", verdict: "failed", startedAt: after },
+    { projectId: "p-stale", harnessVersion: 3, split: "train", verdict: "failed", startedAt: before },
+    { projectId: "p-stale", harnessVersion: 3, split: "train", verdict: "failed", startedAt: after, superseded: true },
+  ];
+  const measured = (since?: Date) => {
+    const f = evidenceResultFilter(3, since);
+    const ids = since ? [...new Set(results.filter((r) => matches(r, f)).map((r) => r.projectId))] : null;
+    return projects.filter((p) => matches(p, measuredProjectsFilter(3, ids))).map((p) => p._id).sort();
+  };
+  it("counts a project created before the cutoff whose failing runs are inside the window", () => {
+    assert.deepEqual(measured(cutoff), ["p-new", "p-old"]);
+    assert.ok(!("createdAt" in measuredProjectsFilter(3, ["p-old"])));
+  });
+  it("keeps --evidence-since semantics: pre-cutoff and superseded results are not evidence", () => {
+    const f = { ...evidenceResultFilter(3, cutoff), verdict: "failed" };
+    assert.deepEqual(results.filter((r) => matches(r, f)).map((r) => r.projectId).sort(), ["p-new", "p-old"]);
+  });
+  it("without a window, measures every finished project of the version", () => {
+    assert.deepEqual(measured(), ["p-new", "p-old", "p-stale"]);
   });
 });

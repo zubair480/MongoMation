@@ -7,7 +7,7 @@ import type { ModelTier } from "@mongomation/types";
 import type { z } from "zod";
 import { telemetry } from "../telemetry/index.ts";
 
-export type AgentName = "requirements" | "binder" | "state_machine" | "codegen" | "critic" | "repair" | "meta";
+export type AgentName = "requirements" | "binder" | "state_machine" | "codegen" | "critic" | "repair" | "meta" | "lesson";
 
 /** $ per million tokens (input, output). Claude API list prices; update if you route elsewhere. */
 const PRICES: Record<string, [number, number]> = {

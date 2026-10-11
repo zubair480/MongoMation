@@ -216,6 +216,20 @@ export interface ProjectDetail {
   costUsd?: number;
   createdAt?: Date;
   unsupported: { id?: string; reason?: string }[];
+  /** Experience recall outcome (worker: projects.recall). kind "none" = cold run. */
+  recall?: RecallLite;
+  /** Prior runs of these requirements on this scene before this one (worker: metrics.runIndex, 0-based). */
+  runIndex?: number;
+  /** status "verified-by-reuse" only: the source project's rig evidence (NOT re-tested in this project). */
+  reusedFrom?: { projectId?: string; tests?: { passed?: number; total?: number } };
+}
+
+export interface RecallLite {
+  kind?: string;
+  sourceProjectId?: string;
+  score?: number;
+  msSaved?: number;
+  confirmed?: boolean;
 }
 
 export interface EventLite {

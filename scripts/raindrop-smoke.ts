@@ -26,6 +26,11 @@ const { aiEvent, testEvent } = await telemetry.span(runId, "engineering", async 
   return { aiEvent, testEvent };
 });
 telemetry.signal({ runId, name: "simulator_test_failed", eventId: testEvent, properties: { testId: "SMOKE-1", category: "smoke" } });
+// Typed signals exactly as engineer.ts emits them: critic verdict = feedback, repair = edit (on the codegen event),
+// binder gap / critic root cause = Self Diagnostics.
+telemetry.signal({ runId, name: "critic_verdict", type: "feedback", sentiment: "NEGATIVE", eventId: aiEvent, comment: "SMOKE critique: SMOKE-1 seal-in missing -> latch the motor", properties: { attempt: 0, smoke: true } });
+telemetry.signal({ runId, name: "repair_edit", type: "edit", sentiment: "NEGATIVE", eventId: aiEvent, after: "PROGRAM smoke_repaired\nEND_PROGRAM", properties: { version: 2, diff: "+ seal-in (smoke)", smoke: true } });
+telemetry.selfDiagnose({ runId, eventId: jobEvent, category: "capability_gap", source: "binder", description: "SMOKE: requirement SMOKE-R9 has no level sensor on this scene", properties: { smoke: true } });
 telemetry.attach(runId, [{ name: "program v1.st", value: "PROGRAM smoke\nEND_PROGRAM", type: "code", language: "pascal" }]);
 await telemetry.finishRun(runId, "SMOKE finished", { status: "smoke" });
 await telemetry.flush();
@@ -33,7 +38,7 @@ console.log(JSON.stringify({ runId, jobEvent, aiEvent, testEvent }));
 
 // Read back through the Query API (ingest is asynchronous: poll up to ~2 min).
 const q = RaindropQuery.fromEnv()!;
-// testEvent === jobEvent unless RAINDROP_CLOUD_PER_TEST=1 (per-test cloud events are off by default).
+// testEvent === jobEvent when RAINDROP_CLOUD_PER_TEST=0 (per-test cloud events are on by default).
 const want = [...new Set([jobEvent, aiEvent, testEvent].filter(Boolean) as string[])];
 const found = new Map<string, unknown>();
 for (let i = 0; i < 24 && found.size < want.length; i++) {

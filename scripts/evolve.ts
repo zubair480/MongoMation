@@ -7,11 +7,14 @@
 //   --limit N               only the FIRST N cases of the split, in benchmark.json order (env BENCH_LIMIT)
 //   --max-repairs N         cap repair rounds per case at min(harness budget, N), same for every condition (env BENCH_MAX_REPAIRS)
 //   --evidence-since X      evolve: only failures recorded at/after X (ISO time, or a job id = that job's createdAt)
-// An evolve job passes --limit/--max-repairs on to the gate benchmark job it queues.
+//   --cases a,b             exactly these frozen cases (full id or short "t3"), benchmark.json order (env BENCH_CASES)
+// An evolve job passes --limit/--max-repairs/--cases on to the gate benchmark job it queues.
+import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ObjectId } from "mongodb";
 import { client, col, connect } from "../apps/worker/src/db/index.ts";
 import { enqueue } from "../apps/worker/src/harness/jobs.ts";
+import { resolveCaseIds } from "../apps/worker/src/rsi/evolve.ts";
 
 const arg = (name: string) => {
   const i = process.argv.indexOf(name);
@@ -41,7 +44,12 @@ if (sinceRaw) {
     if (Number.isNaN(evidenceSince.getTime())) throw new Error(`--evidence-since: not a time or job id: ${sinceRaw}`);
   }
 }
-const extra = { ...(caseLimit && { caseLimit }), ...(maxRepairs !== undefined && { maxRepairs }), ...(evidenceSince && type === "evolve" && { evidenceSince }) };
+// --cases t3,t4: resolved to full frozen ids here (fail fast); the worker re-validates against the frozen file.
+const casesRaw = (arg("--cases") ?? process.env.BENCH_CASES ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+if (process.argv.includes("--cases") && !casesRaw.length) throw new Error("--cases needs a comma-separated list of case ids (e.g. --cases t3,t4)");
+const benchCases = JSON.parse(readFileSync(new URL("../specs/benchmark.json", import.meta.url), "utf8")).cases as { id: string; split: string }[];
+const caseIds = casesRaw.length ? resolveCaseIds(benchCases, type === "ablation" ? "heldout" : "train", casesRaw) : [];
+const extra = { ...(caseLimit && { caseLimit }), ...(caseIds.length && { caseIds }),...(maxRepairs !== undefined && { maxRepairs }), ...(evidenceSince && type === "evolve" && { evidenceSince }) };
 const jobId = await enqueue({ type, origin: "script" }, extra);
 console.log(`${type} job ${jobId} queued${Object.keys(extra).length ? ` with limits ${JSON.stringify(extra)}` : ""}`);
 for (;;) {

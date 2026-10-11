@@ -228,6 +228,10 @@ export interface HarnessConfig extends HarnessBody {
   gateNote?: string;
   createdAt: string;
   decidedAt?: string;
+  /** Operator-made versions: "seed" (RSI seed) or "restore:vN" (copy of vN made current again). */
+  label?: string;
+  /** For a restore: the version whose body was copied. */
+  restoredFrom?: number;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -130,8 +130,8 @@ export class FactoryIoWebApi implements Simulator {
     return t;
   }
 
-  private async refreshIndex() {
-    const tags = (await this.call<FioTag[]>("GET", "/api/tags")).map((t) => ({ ...t, kind: (String(t.kind).charAt(0).toUpperCase() + String(t.kind).slice(1).toLowerCase()) as FioTag["kind"] }));
+  private async refreshIndex(opts: { timeoutMs?: number; retries?: number } = {}) {
+    const tags = (await this.call<FioTag[]>("GET", "/api/tags", undefined, opts.retries ?? 2, opts.timeoutMs ?? this.timeoutMs)).map((t) => ({ ...t, kind: (String(t.kind).charAt(0).toUpperCase() + String(t.kind).slice(1).toLowerCase()) as FioTag["kind"] }));
     this.index = new Map(tags.map((t) => [`${t.kind}:${t.name}`, t]));
     return tags;
   }
@@ -147,8 +147,9 @@ export class FactoryIoWebApi implements Simulator {
     }
   }
 
-  async tags(): Promise<SimTag[]> {
-    const tags = await this.refreshIndex();
+  /** The live rig monitor polls this every RIG_POLL_MS with {timeoutMs, retries: 0}: fail fast, the next tick retries. */
+  async tags(opts: { timeoutMs?: number; retries?: number } = {}): Promise<SimTag[]> {
+    const tags = await this.refreshIndex(opts);
     return tags.map((t) => ({ name: t.name, id: t.id, kind: t.kind, type: t.type, forced: t.isForced, forcedValue: t.forcedValue, value: t.value }));
   }
 

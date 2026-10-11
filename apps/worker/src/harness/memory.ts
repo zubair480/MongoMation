@@ -61,8 +61,8 @@ export async function rerank(query: string, documents: string[], topK: number, f
 }
 
 /** The $vectorSearch stage for the configured mode (auto: Atlas embeds the query text itself). */
-export async function vectorStage(index: string, query: string, limit: number, filter: Record<string, unknown>) {
-  if (embeddingMode() === "auto") return { $vectorSearch: { index, path: "text", query: { text: query }, numCandidates: Math.max(50, limit * 20), limit, filter } };
+export async function vectorStage(index: string, query: string, limit: number, filter: Record<string, unknown>, textPath = "text") {
+  if (embeddingMode() === "auto") return { $vectorSearch: { index, path: textPath, query: { text: query }, numCandidates: Math.max(50, limit * 20), limit, filter } };
   const [queryVector] = await embed([query], "query");
   return { $vectorSearch: { index, path: "embedding", queryVector, numCandidates: Math.max(50, limit * 20), limit, filter } };
 }

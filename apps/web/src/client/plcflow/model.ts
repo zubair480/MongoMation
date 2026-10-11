@@ -1,11 +1,20 @@
 // Derives Ali's workflow view (5 run steps, tab unlocks) from the REAL project read model. No invented values:
 // a step is only "done" when the worker wrote a finished checkpoint for it.
-import { summarizeStages, type ProjectData, type StageLite } from '@/shared/mongomation';
+import { summarizeStages, type ProjectData, type StageLite, type TestLite } from '@/shared/mongomation';
 
 export type StepStatus = 'pending' | 'active' | 'done' | 'warn';
 export const STEPS = ['PLC Code', 'Compile & Deploy', 'HMI', 'Test', 'Verified'] as const;
 export const STEP_TAB = ['build', 'build', 'hmi', 'verify', 'build'] as const;
-export const FINAL_PROJECT = ['verified', 'partially_verified', 'not_verified', 'failed', 'blocked'];
+export const FINAL_PROJECT = ['verified', 'partially_verified', 'not_verified', 'failed', 'blocked', 'verified-by-reuse'];
+/** Trusted experience recall: final and successful-looking, but NOT re-tested on the rig in this project. */
+export const REUSE_STATUS = 'verified-by-reuse';
+
+/** Human status text. "verified-by-reuse" never reads as a fresh rig verification. */
+export function projectStatusText(s?: string | null): string {
+  if (!s) return '';
+  if (s === REUSE_STATUS) return 'verified by reuse';
+  return s.replace(/_/g, ' ');
+}
 
 const GROUPS: string[][] = [
   ['requirements', 'io_design', 'state_machine', 'plc_code'],
@@ -28,6 +37,8 @@ export interface RunView {
   cur: number;
   finished: boolean;
   verified: boolean;
+  /** status "verified-by-reuse": counts as a success (verified is true) but must be labelled as reuse, not a rig pass. */
+  reused: boolean;
   deployed: boolean;
 }
 
@@ -37,7 +48,7 @@ export function stagesOf(stages: StageLite[], names: string[]) {
 
 const label = (d: StageLite) => d.stage.replace(/_/g, ' ') + (d.attempt > 1 ? ` #${d.attempt}` : '');
 
-export function deriveRun(p: ProjectData | null): RunView {
+export function deriveRun(p: ProjectData | null, tv?: TestView): RunView {
   const stages = p?.stages ?? []; // server sorts by startedAt ascending
   const status: StepStatus[] = STEPS.map(() => 'pending');
   const sub: string[] = STEPS.map(() => '');
@@ -75,20 +86,24 @@ export function deriveRun(p: ProjectData | null): RunView {
   }
 
   const newest = p?.plcVersions[0]; // newest first
-  if (status[0] === 'done' && newest?.version != null) sub[0] = `v${newest.version}`;
+  if (status[0] === 'done' && newest?.version != null) sub[0] = `v${newest.version}${newest.createdBy === 'recall' ? ' · recalled' : ''}`;
 
-  const tc = p?.testCounts;
-  if (tc?.total && !sub[3].startsWith('repair')) sub[3] = `${tc.passed} / ${tc.total}`;
-  if (tc?.failed && status[3] === 'done') status[3] = 'warn'; // failures on the newest sim run, no repair running
+  // Latest attempt only (never summed across self-repair re-runs): "Attempt 3 · 5 / 16 tests" or "14 / 16".
+  const tc = tv ? { total: tv.tests.length, failed: tv.failed, blocked: tv.blocked } : p?.testCounts;
+  if (tv?.label && !(sub[3].startsWith('repair') && !tv.running)) sub[3] = tv.label;
+  else if (!tv && p?.testCounts.total && !sub[3].startsWith('repair')) sub[3] = `${p.testCounts.passed} / ${p.testCounts.total}`;
+  // Failed or blocked tests on the newest sim run (no repair running): the Test step is not a clean pass.
+  if ((tc?.failed || tc?.blocked) && status[3] === 'done') status[3] = 'warn';
 
   const ps = p?.project?.status;
   const finished = !!ps && FINAL_PROJECT.includes(ps);
-  const verified = ps === 'verified';
+  const reused = ps === REUSE_STATUS;
+  const verified = ps === 'verified' || reused;
   if (finished) {
     status[4] = verified ? 'done' : 'warn';
     const ok = p?.verdicts.filter((v) => isOk(v.status)).length ?? 0;
     const total = p?.verdicts.length ?? 0;
-    sub[4] = total ? `${ok} / ${total}` : ps!.replace(/_/g, ' ');
+    sub[4] = reused ? 'verified by reuse' : total ? `${ok} / ${total}` : projectStatusText(ps);
     if (verified) for (const i of [0, 1, 3]) if (status[i] === 'warn') status[i] = 'done';
   }
 
@@ -98,7 +113,7 @@ export function deriveRun(p: ProjectData | null): RunView {
   if (cur < 0) for (let i = status.length - 1; i >= 0; i--) if (status[i] !== 'pending') { cur = i; break; }
   if (finished) cur = 4;
   if (cur < 0) cur = 0;
-  return { status, sub, cur, finished, verified, deployed };
+  return { status, sub, cur, finished, verified, reused, deployed };
 }
 
 /** Verdict statuses that count as verified with evidence. */
@@ -138,4 +153,110 @@ export function fmtDur(ms?: number) {
   if (ms == null || !isFinite(ms)) return '—';
   const s = Math.round(ms / 1000);
   return s >= 60 ? `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s` : `${s}s`;
+}
+
+/* ---------- test attempts: a live run self-repairs and re-runs the FULL suite on every attempt ---------- */
+
+/** One sim run (= one attempt of the suite) summarized. `publicOnly`: only the public tests of it are known. */
+export interface AttemptSummary {
+  simRunId: string;
+  attempt: number;
+  version?: number;
+  passed: number;
+  failed: number;
+  blocked: number;
+  total: number;
+  publicOnly?: boolean;
+}
+
+/** What every test count on the page shows: the LATEST sim run only, deduped per test, never summed across attempts. */
+export interface TestView {
+  simRunId?: string;
+  attempt: number;
+  version?: number;
+  tests: TestLite[];
+  passed: number;
+  failed: number;
+  blocked: number;
+  /** Tests of this attempt with a verdict. */
+  finished: number;
+  /** Suite size: this attempt's own total once it finished, else the last finished attempt's total (unknown before). */
+  suite?: number;
+  running: boolean;
+  /** "Attempt 3 · 5 / 16 tests" while running, "14 / 16" once done. */
+  label: string;
+  /** Earlier attempts (oldest first), shown separately, never added up. */
+  history: AttemptSummary[];
+}
+
+/** Last non-superseded row per test wins (the server already drops superseded rows; this guards the UI anyway). */
+export function dedupeTests(tests: TestLite[], simRunId?: string): TestLite[] {
+  const byKey = new Map<string, TestLite>();
+  for (const t of tests) {
+    if (simRunId && t.simRunId && t.simRunId !== simRunId) continue;
+    if ((t as TestLite & { superseded?: boolean }).superseded) continue;
+    if (t.testId && /~attempt\d+$/.test(t.testId)) continue;
+    byKey.set(t.testId ? `${t.visibility}:${t.testId}` : t.id, t);
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Builds the TestView. `known` = finished attempts remembered for this project (full counts); `trend` = per-run
+ * public counts from the analytics live query (covers attempts this browser never saw finish).
+ */
+export function deriveTests(
+  p: ProjectData | null,
+  known: AttemptSummary[] = [],
+  trend: { simRunId: string; publicPassed: number; publicTotal: number }[] = [],
+): TestView {
+  const sr = p?.simRun ?? null;
+  const tests = dedupeTests(p?.tests ?? [], sr?.id);
+  const n = (v: string) => tests.filter((t) => t.verdict === v).length;
+  const passed = n('passed'), failed = n('failed'), blocked = n('blocked');
+  const finished = tests.filter((t) => t.verdict).length;
+  const running = !!sr && !sr.finishedAt && (!sr.status || sr.status === 'running');
+  const versionOf = (plcVersionId?: string) => p?.plcVersions.find((v) => v.id === plcVersionId)?.version;
+  const version = versionOf(sr?.plcVersionId);
+
+  // Attempt order: every sim run id we know of, oldest first, the current one last.
+  const ids: string[] = [];
+  for (const k of known) if (!ids.includes(k.simRunId)) ids.push(k.simRunId);
+  for (const t of trend) if (!ids.includes(t.simRunId)) ids.push(t.simRunId);
+  const ordered = [...ids].sort((a, b) => a.localeCompare(b)); // ObjectIds sort by creation time
+  if (sr && !ordered.includes(sr.id)) ordered.push(sr.id);
+  const attemptOf = (id: string) => ordered.indexOf(id) + 1;
+  const attempt = sr ? Math.max(attemptOf(sr.id), 1) : 0;
+
+  const history: AttemptSummary[] = ordered.filter((id) => id !== sr?.id).map((id) => {
+    const k = known.find((x) => x.simRunId === id);
+    if (k) return { ...k, attempt: attemptOf(id) };
+    const t = trend.find((x) => x.simRunId === id)!;
+    return { simRunId: id, attempt: attemptOf(id), passed: t.publicPassed, failed: t.publicTotal - t.publicPassed, blocked: 0, total: t.publicTotal, publicOnly: true };
+  });
+  const lastFull = [...history].reverse().find((h) => !h.publicOnly);
+  const suite = running ? (lastFull ? Math.max(lastFull.total, tests.length) : undefined) : tests.length || undefined;
+  const label = !sr || (!tests.length && !running)
+    ? ''
+    : running
+      ? `Attempt ${attempt} · ${finished}${suite ? ` / ${suite}` : ''} tests${suite ? '' : ' run'}`
+      : `${passed} / ${tests.length}`;
+  return { simRunId: sr?.id, attempt, version, tests, passed, failed, blocked, finished, suite, running, label, history };
+}
+
+/** Remembers finished attempts per project in this browser (full counts incl. hidden), so the suite size is known mid-run. */
+export function rememberAttempt(projectId: string, tv: TestView): AttemptSummary[] {
+  const key = `mm.attempts.${projectId}`;
+  let list: AttemptSummary[] = [];
+  try { list = JSON.parse(localStorage.getItem(key) ?? '[]') as AttemptSummary[]; } catch { list = []; }
+  if (tv.simRunId && !tv.running && tv.tests.length && !list.some((a) => a.simRunId === tv.simRunId && a.total === tv.tests.length)) {
+    list = [...list.filter((a) => a.simRunId !== tv.simRunId), { simRunId: tv.simRunId, attempt: tv.attempt, version: tv.version, passed: tv.passed, failed: tv.failed, blocked: tv.blocked, total: tv.tests.length }];
+    try { localStorage.setItem(key, JSON.stringify(list.slice(-20))); } catch { /* storage unavailable */ }
+  }
+  return list;
+}
+
+export function readAttempts(projectId: string | null): AttemptSummary[] {
+  if (!projectId) return [];
+  try { return JSON.parse(localStorage.getItem(`mm.attempts.${projectId}`) ?? '[]') as AttemptSummary[]; } catch { return []; }
 }

@@ -33,12 +33,38 @@ export interface RunLimits {
   caseLimit?: number;
   maxRepairs?: number;
   evidenceSince?: Date;
+  /** --cases: exactly these frozen cases of the split (full id, or the short prefix before the first "-",
+   *  e.g. "t3" = "t3-jam-latch"), run in benchmark.json order. Unknown/ambiguous/other-split ids throw. */
+  caseIds?: string[];
 }
 
-export function selectCases<T extends { split: string }>(cases: T[], split: "train" | "heldout", caseLimit?: number) {
+/** Resolves --cases ids (full or short "t3") against one split; throws on anything it cannot match exactly once. */
+export function resolveCaseIds<T extends { id: string; split: string }>(cases: T[], split: "train" | "heldout", ids: string[]): string[] {
   const all = cases.filter((c) => c.split === split);
-  const selected = caseLimit && caseLimit > 0 ? all.slice(0, caseLimit) : all;
-  return { selected, total: all.length, limit: caseLimit && caseLimit > 0 ? caseLimit : null };
+  return [...new Set(ids.map((raw) => {
+    const want = raw.trim();
+    const exact = all.find((c) => c.id === want);
+    if (exact) return exact.id;
+    const short = all.filter((c) => c.id.split("-")[0] === want);
+    if (short.length === 1) return short[0].id;
+    throw new Error(`--cases: "${want}" is not ${short.length ? "a unique" : "a"} ${split} case (have: ${all.map((c) => c.id).join(", ")})`);
+  }))];
+}
+
+export function selectCases<T extends { id: string; split: string }>(cases: T[], split: "train" | "heldout", caseLimit?: number, caseIds?: string[]) {
+  const all = cases.filter((c) => c.split === split);
+  const wanted = caseIds?.length ? new Set(resolveCaseIds(cases, split, caseIds)) : null;
+  const picked = wanted ? all.filter((c) => wanted.has(c.id)) : all;
+  const selected = caseLimit && caseLimit > 0 ? picked.slice(0, caseLimit) : picked;
+  return { selected, total: all.length, limit: caseLimit && caseLimit > 0 ? caseLimit : null, explicit: wanted ? selected.map((c) => c.id) : null };
+}
+
+/** Gate-note line for a subset run (null for a full run). */
+export function subsetNote(sel: { selected: { id: string }[]; total: number; limit: number | null; explicit: string[] | null }, maxRepairs?: number) {
+  if (!sel.limit && !sel.explicit) return null;
+  const ids = sel.selected.map((c) => c.id).join(", ");
+  const how = sel.explicit ? `--cases ${sel.explicit.join(",")}${sel.limit ? `, limit=${sel.limit}` : ""}` : `first ${sel.selected.length}, limit=${sel.limit}`;
+  return `subset: ${ids} (${sel.selected.length} of ${sel.total} frozen cases; ${how})${maxRepairs !== undefined ? `, repairs capped at ${maxRepairs}` : ""}`;
 }
 
 export function capRepairs(cfg: HarnessConfig, maxRepairs?: number): HarnessConfig {
@@ -46,11 +72,24 @@ export function capRepairs(cfg: HarnessConfig, maxRepairs?: number): HarnessConf
   return { ...cfg, workflow: { ...cfg.workflow, repair_budget: maxRepairs } };
 }
 
+/** Test results that count as evidence: this harness version, train split, not superseded by a retry, and (with
+ *  --evidence-since) recorded at/after the cutoff. */
+export function evidenceResultFilter(version: number, evidenceSince?: Date) {
+  return { harnessVersion: version, split: { $ne: "heldout" }, superseded: { $ne: true }, ...(evidenceSince && { startedAt: { $gte: evidenceSince } }) };
+}
+
+/** Projects measured for the meta-agent. With an evidence window the set is the projects that have in-window test
+ *  results (windowProjectIds), NOT projects created after the cutoff: a project created earlier whose failing runs
+ *  fall inside the window is still measured (otherwise clusters say projects: 2 while metrics say 1). */
+export function measuredProjectsFilter(version: number, windowProjectIds: string[] | null) {
+  return { harnessVersion: version, status: { $in: ["verified", "partially_verified", "failed"] }, ...(windowProjectIds && { _id: { $in: windowProjectIds } }) };
+}
+
 export async function collectEvidence(config: HarnessConfig, evidenceSince?: Date): Promise<MetaEvidence> {
   const failed = await col
     .testResults()
     .find(
-      { harnessVersion: config.version, verdict: "failed", split: { $ne: "heldout" }, superseded: { $ne: true }, ...(evidenceSince && { startedAt: { $gte: evidenceSince } }) },
+      { ...evidenceResultFilter(config.version, evidenceSince), verdict: "failed" },
       { projection: { steps: 0, stepLogs: 0 } },
     )
     .sort({ startedAt: -1 })
@@ -76,7 +115,8 @@ export async function collectEvidence(config: HarnessConfig, evidenceSince?: Dat
     c.runIds = [...new Set(c.runIds)];
     c.raindropEventIds = [...new Set(c.raindropEventIds)];
   }
-  const projects = await col.projects().find({ harnessVersion: config.version, status: { $in: ["verified", "partially_verified", "failed"] }, ...(evidenceSince && { createdAt: { $gte: evidenceSince } }) }).toArray();
+  const windowProjectIds = evidenceSince ? (await col.testResults().distinct("projectId", evidenceResultFilter(config.version, evidenceSince))).map(String) : null;
+  const projects = await col.projects().find(measuredProjectsFilter(config.version, windowProjectIds) as never).toArray();
   const sat = projects.map((p) => {
     const v = (p.verdicts as { status: string }[] | undefined) ?? [];
     const relevant = v.filter((x) => x.status !== "unsupported");
@@ -130,7 +170,7 @@ export async function runEvolveRound(args: { jobId: string; config: HarnessConfi
     // The gate benchmark inherits the evolve job's explicit limits (recorded on the job and on every row).
     const benchmarkJobId = await enqueue(
       { type: "benchmark", origin: "script" },
-      { candidateVersion: candidate.version, ...(limits.caseLimit && { caseLimit: limits.caseLimit }), ...(limits.maxRepairs !== undefined && { maxRepairs: limits.maxRepairs }) },
+      { candidateVersion: candidate.version, ...(limits.caseLimit && { caseLimit: limits.caseLimit }), ...(limits.maxRepairs !== undefined && { maxRepairs: limits.maxRepairs }), ...(limits.caseIds?.length && { caseIds: limits.caseIds }) },
       session,
     );
     const doc = await col.proposals().insertOne({ ...base, change: true, verdict: "pending", candidateVersion: candidate.version, rationale: p.rationale, expectedEffect: p.expectedEffect, citedRunIds: cited, diff, guardrailViolations: [], metaTraceId: meta.traceId, benchmarkJobId: String(benchmarkJobId), provenance: "live" }, { session });
@@ -240,9 +280,10 @@ export async function runBenchmarkJob(
     await recordVerdict(candidate.version, { verdict: "rejected", gateNote: `stale: proposed from v${candidate.parent}, current is v${parent.version}` });
     return { verdict: "rejected", reason: "stale parent" };
   }
-  const { selected: train, total, limit } = selectCases(cases, "train", args.limits?.caseLimit);
+  const sel = selectCases(cases, "train", args.limits?.caseLimit, args.limits?.caseIds);
+  const { selected: train, total, limit } = sel;
   const maxRepairs = args.limits?.maxRepairs;
-  const subset = { limit, caseIds: train.map((c) => c.id), totalCases: total, maxRepairs: maxRepairs ?? null };
+  const subset = { limit, caseIds: train.map((c) => c.id), totalCases: total, maxRepairs: maxRepairs ?? null, explicitCases: sel.explicit };
   const run = { limit, caseIds: subset.caseIds, maxRepairs };
   const rows: Record<string, Awaited<ReturnType<typeof runCase>>[]> = { parent: [], candidate: [] };
   for (const c of train) {
@@ -258,7 +299,8 @@ export async function runBenchmarkJob(
   const candidateScores = score(rows.candidate);
   const decision = decide(candidateScores, parentScores);
   // Honest labelling: a limited run says so in the gate note itself, not only in a side field.
-  const d = limit ? { ...decision, reasons: [...decision.reasons, `subset: first ${train.length} of ${total} frozen train cases (limit=${limit}: ${subset.caseIds.join(", ")})${maxRepairs !== undefined ? `, repairs capped at ${maxRepairs}` : ""}`] } : decision;
+  const note = subsetNote(sel, maxRepairs);
+  const d = note ? { ...decision, reasons: [...decision.reasons, note] } : decision;
   // ONE transaction: the harness version's verdict (which decides what currentConfig() returns, i.e. which harness
   // every later job runs) and the proposal's verdict shown on the dashboard can never disagree.
   await withTxn(async (session) => {
@@ -299,9 +341,10 @@ export async function runAblationJob(
   deps: { plc: PlcRuntime; sim: Simulator; rigId: string; loadScene: (id?: string) => Promise<SceneDefinition> },
 ) {
   const { cases, hash } = await loadFrozenBenchmark();
-  const { selected: heldout, total, limit } = selectCases(cases, "heldout", args.limits?.caseLimit);
+  const sel = selectCases(cases, "heldout", args.limits?.caseLimit, args.limits?.caseIds);
+  const { selected: heldout, total, limit } = sel;
   const maxRepairs = args.limits?.maxRepairs;
-  const subset = { limit, caseIds: heldout.map((c) => c.id), totalCases: total, maxRepairs: maxRepairs ?? null };
+  const subset = { limit, caseIds: heldout.map((c) => c.id), totalCases: total, maxRepairs: maxRepairs ?? null, explicitCases: sel.explicit };
   if (!heldout.length) throw new Error("benchmark has no held-out cases");
   const v0 = await getConfig(0);
   if (!v0) throw new Error("harness v0 missing in Atlas; run npm run seed");

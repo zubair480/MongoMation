@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { usePlcSource, useTimeline } from '@/client/lib/api';
 import type { ProjectData, TestLite } from '@/shared/mongomation';
-import { isOk, stagesOf, type RunView } from '@/client/plcflow/model';
+import { deriveTests, isOk, stagesOf, type RunView, type TestView } from '@/client/plcflow/model';
 
 const isSafety = (kind?: string, text?: string) => /safety|e.?stop|emergency/i.test(`${kind ?? ''} ${text ?? ''}`);
 
@@ -23,16 +23,27 @@ export function Repair({ p }: { p: ProjectData }) {
   </div>);
 }
 
-export function TestsList({ p, click, sel, onSel, live }: { p: ProjectData; click: boolean; sel?: string; onSel?: (t: TestLite) => void; live: boolean }) {
-  const done = p.tests.filter((t) => t.verdict).length;
+/** "Attempt 3 · v3 · 5 / 16 tests": which attempt of the suite the counts belong to. */
+export function AttemptLine({ tv }: { tv: TestView }) {
+  if (!tv.simRunId) return null;
+  const counts = tv.running ? `${tv.finished}${tv.suite ? ` / ${tv.suite}` : ''} tests${tv.suite ? '' : ' run so far'}` : `${tv.passed} / ${tv.tests.length} passed`;
+  return <p className="lbl" data-testid="attempt-line" style={{ margin: '0 0 8px' }}>Attempt {tv.attempt}{tv.version != null ? ` · v${tv.version}` : ''} · {counts}{tv.running ? ' · running' : ''}</p>;
+}
+
+export function TestsList({ p, tv, click, sel, onSel, live }: { p: ProjectData; tv?: TestView; click: boolean; sel?: string; onSel?: (t: TestLite) => void; live: boolean }) {
+  const view = tv ?? deriveTests(p);
+  const tests = view.tests;
+  const done = view.finished;
+  const denom = view.suite ?? tests.length;
   return (<>
-    <div className="progress"><i style={{ width: `${p.tests.length ? (done / p.tests.length) * 100 : 0}%` }} /></div>
-    <div className="tests">{p.tests.length ? p.tests.map((t) => {
+    <AttemptLine tv={view} />
+    <div className="progress"><i style={{ width: `${denom ? (done / denom) * 100 : 0}%` }} /></div>
+    <div className="tests">{tests.length ? tests.map((t, idx) => {
       const s = t.verdict === 'passed' ? 'pass' : t.verdict === 'failed' || t.verdict === 'blocked' ? 'fail' : live ? 'run' : '';
       const c = click && t.visibility === 'public' && s !== 'run';
-      return (<div key={t.id} className={`test ${s} ${c ? 'click' : ''} ${click && sel === t.id ? 'sel' : ''}`} onClick={c ? () => onSel?.(t) : undefined}>
-        <span className="i">{s === 'pass' ? '✓' : s === 'fail' ? '✕' : ''}</span>
-        <span>{t.visibility === 'hidden' ? `🔒 ${t.title}` : <><span className="id">{t.testId}</span>{t.title}</>}{t.verdict === 'blocked' ? <span className="sf">blocked</span> : null}</span>
+      return (<div key={t.id} className={`test ${s} ${t.verdict === 'blocked' ? 'blk' : ''} ${c ? 'click' : ''} ${click && sel === t.id ? 'sel' : ''}`} style={{ '--i': idx } as React.CSSProperties} onClick={c ? () => onSel?.(t) : undefined}>
+        <span className="i">{s === 'pass' ? '✓' : t.verdict === 'blocked' ? '!' : s === 'fail' ? '✕' : ''}</span>
+        <span className="tt">{t.visibility === 'hidden' ? `🔒 ${t.title}` : <><span className="id">{t.testId}</span>{t.title}</>}{t.verdict === 'blocked' ? <span className="sf">blocked</span> : null}</span>
         <span className="rq">{t.requirementIds.join(' ')}</span></div>);
     }) : <div className="empty" style={{ padding: 24 }}>Tests run on the live simulator after deploy.</div>}</div>
     <Repair p={p} />
@@ -59,38 +70,47 @@ function Timeline({ test, live }: { test: TestLite; live: boolean }) {
     {Array.from({ length: 7 }, (_, i) => <g key={i}><line x1={x((T * i) / 6)} x2={x((T * i) / 6)} y1={Tp} y2={H - B} stroke="#ebe8e2" /><text x={x((T * i) / 6)} y={H - 6} fill="#9aa1a8" fontSize="10" fontFamily="var(--mono)" textAnchor="middle">{((T * i) / 6000).toFixed(1)}s</text></g>)}
     {keys.map((k, i) => <text key={k} x={L - 8} y={lane(i) + 19} fill="#67717b" fontSize="10" fontFamily="var(--mono)" textAnchor="end">{k.slice(0, 13)}</text>)}
     {keys.map((k, i) => <path key={k} d={path(k, i)} fill="none" stroke={colors[i]} strokeWidth="2.2" />)}
-    {!passed && failedAt != null ? <line x1={x(failedAt)} x2={x(failedAt)} y1={Tp} y2={H - B} stroke="#c0322b" strokeDasharray="3 3" /> : null}
+    {!passed && failedAt != null ? <line x1={x(failedAt)} x2={x(failedAt)} y1={Tp} y2={H - B} stroke="#D7261E" strokeDasharray="3 3" /> : null}
   </svg>
     {d.truncated ? <p className="hint">Showing change points of {d.totalSamples} samples (truncated).</p> : null}
     <div className="note" style={{ color: passed ? 'var(--go)' : 'var(--stop)' }}>{passed ? '✓' : '✕'} {note}</div></>);
 }
 
-export default function VerificationTab({ run, p }: { run: RunView; p: ProjectData | null }) {
+export default function VerificationTab({ run, p, tv: tvIn }: { run: RunView; p: ProjectData | null; tv?: TestView }) {
   const [selId, setSelId] = React.useState<string | null>(null);
   if (!p || !p.tests.length) return <div className="empty"><b>No tests yet</b>Tests run on the live simulator after the HMI is built.</div>;
+  // Latest attempt only: a self-repairing run re-runs the FULL suite, so attempts are never added up.
+  const tv = tvIn ?? deriveTests(p);
+  const tests = tv.tests;
   const live = !run.finished;
   const ok = p.verdicts.filter((v) => isOk(v.status)).length;
   const reqTotal = p.verdicts.length || p.requirements?.items.length || 0;
   const repairs = p.plcVersions.filter((v) => v.createdBy === 'repair').length;
-  const hidden = p.tests.filter((t) => t.visibility === 'hidden').length;
-  const sel = p.tests.find((t) => t.id === selId) ?? p.tests.find((t) => t.visibility === 'public' && t.verdict === 'failed') ?? p.tests.find((t) => t.visibility === 'public') ?? null;
+  const hidden = tests.filter((t) => t.visibility === 'hidden').length;
+  const notPassed = tv.failed + tv.blocked;
+  const ofTotal = tv.running ? (tv.suite ? `${tv.finished} / ${tv.suite} run · running` : `${tv.finished} run so far · running`) : `of ${tests.length} tests`;
+  const ver = (v?: number) => (v != null ? ` · v${v}` : '');
+  const sel = tests.find((t) => t.id === selId) ?? tests.find((t) => t.visibility === 'public' && (t.verdict === 'failed' || t.verdict === 'blocked')) ?? tests.find((t) => t.visibility === 'public') ?? null;
   return (<>
     <div className="metrics" style={{ marginBottom: 18 }}>
-      <div className="metric"><div className="k">Passed</div><div className="v t-go">{p.testCounts.passed}</div><div className="s">of {p.testCounts.total} tests</div></div>
-      <div className="metric"><div className="k">Failed</div><div className={`v ${p.testCounts.failed ? 't-stop' : ''}`}>{p.testCounts.failed}</div><div className="s">{repairs ? `${repairs} self-repair${repairs > 1 ? 's' : ''}` : p.testCounts.blocked ? `${p.testCounts.blocked} blocked` : '—'}</div></div>
+      <div className="metric"><div className="k">Passed · attempt {tv.attempt}{ver(tv.version)}</div><div className="v t-go">{tv.passed}</div><div className="s">{ofTotal}</div></div>
+      <div className="metric"><div className="k">{tv.blocked ? 'Failed / blocked' : 'Failed'}</div><div className={`v ${notPassed ? 't-stop' : ''}`}>{notPassed}</div><div className="s">{[tv.blocked ? `${tv.failed} failed · ${tv.blocked} blocked` : '', repairs ? `${repairs} self-repair${repairs > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ') || '—'}</div></div>
       <div className="metric"><div className="k">Hidden tests</div><div className="v">{hidden}</div><div className="s">never shown to the model</div></div>
       <div className="metric"><div className="k">Requirements</div><div className={`v ${ok === reqTotal && ok ? 't-go' : ''}`}>{ok} / {reqTotal}</div><div className="s">verified with evidence</div></div></div>
+    {tv.history.length ? <div className="card" data-testid="attempt-history" style={{ marginBottom: 18 }}><div className="ch"><h3>Attempts</h3><span className="r sub">each self-repair re-runs the full suite · shown per attempt, never added up</span></div>
+      <div className="cb" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>{tv.history.map((h) => <span key={h.simRunId} className={`pill ${h.failed || h.blocked ? 'stop' : 'go'}`} title={`sim run ${h.simRunId}${h.publicOnly ? ' · only its public tests are known here' : ''}`}>Attempt {h.attempt} · {h.passed}/{h.total}{h.publicOnly ? ' public' : ''}{ver(h.version)}</span>)}
+        <span className="pill fl" title={`sim run ${tv.simRunId ?? ''}`}>Attempt {tv.attempt} · {tv.running ? `${tv.finished}${tv.suite ? `/${tv.suite}` : ''} running` : `${tv.passed}/${tests.length}`}{ver(tv.version)} · latest</span></div></div> : null}
     <div className="grid2">
       <div className="card"><div className="ch"><h3>Requirements</h3><span className="r sub">verified only with measured evidence</span></div>
         {p.requirements?.items.length ? <table><thead><tr><th>Id</th><th>Requirement</th><th>Tests</th><th style={{ textAlign: 'right' }}>Status</th></tr></thead><tbody>{p.requirements.items.map((r) => {
           const v = p.verdicts.find((x) => x.requirementId === r.id), s = v?.status;
-          const testIds = v?.testIds.length ? v.testIds : p.tests.filter((t) => t.requirementIds.includes(r.id)).map((t) => t.testId ?? 'hidden');
-          const testing = !s && p.tests.some((t) => t.requirementIds.includes(r.id) && !t.verdict) && live;
-          return <tr key={r.id}><td className="m">{r.id}{isSafety(r.kind, r.text) ? <><br /><span className="sf" style={{ margin: '4px 0 0' }}>safety</span></> : null}</td><td>{r.text}</td><td className="m">{testIds.join(' ')}</td>
+          const testIds = v?.testIds.length ? v.testIds : tests.filter((t) => t.requirementIds.includes(r.id)).map((t) => t.testId ?? 'hidden');
+          const testing = !s && tests.some((t) => t.requirementIds.includes(r.id) && !t.verdict) && live;
+          return <tr key={r.id}><td className="m"><span className="idst">{r.id}</span>{isSafety(r.kind, r.text) ? <><br /><span className="sf" style={{ margin: '4px 0 0' }}>safety</span></> : null}</td><td>{r.text}</td><td className="m">{testIds.join(' ')}</td>
             <td style={{ textAlign: 'right' }}>{isOk(s) ? <span className="pill go"><i />verified</span> : s === 'violated' || s === 'failed' ? <span className="pill stop"><i />failed</span> : s === 'blocked' ? <span className="pill ca"><i />blocked</span> : testing ? <span className="pill fl"><i />testing</span> : <span className="pill nt">untested</span>}</td></tr>;
         })}</tbody></table> : <div className="empty" style={{ border: 0 }}>No requirements recorded</div>}</div>
       <div className="stack">
-        <div className="card"><div className="ch"><h3>Tests</h3><span className="r sub">click a public test for its timeline</span></div><div className="cb"><TestsList p={p} click sel={sel?.id} onSel={(t) => setSelId(t.id)} live={live} /></div></div>
+        <div className="card"><div className="ch"><h3>Tests</h3><span className="r sub">click a public test for its timeline</span></div><div className="cb"><TestsList p={p} tv={tv} click sel={sel?.id} onSel={(t) => setSelId(t.id)} live={live} /></div></div>
         <div className="card"><div className="ch"><h3>Measured timeline · {sel?.testId ?? '—'}</h3><span className="r sub">{sel?.title ?? ''}</span></div><div className="cb">{sel ? <Timeline test={sel} live={live} /> : <div className="empty" style={{ padding: 24 }}>—</div>}</div></div>
       </div></div></>);
 }

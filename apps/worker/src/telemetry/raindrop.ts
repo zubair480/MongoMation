@@ -9,16 +9,21 @@
 //     `launch_subagent` dispatch span naming the child event id, and a real `agent:<name>` span with the call's
 //     duration, so the job trace shows requirements → binder → codegen → critic → repair as nested work;
 //   - compile/deploy/test steps are tool spans on the job interaction (with real start time + duration);
-//     failures carry `error`. With RAINDROP_CLOUD_PER_TEST=1 a step about ONE test (input.testId) additionally
-//     gets its own event (a sub-agent of the job, trace id per test). Default off (free-tier event budget): the
-//     test is only a span on the job and its trace id is the job event;
+//     failures carry `error`. A step about ONE test (input.testId) additionally gets its own event (a sub-agent
+//     of the job, trace id per test). Default ON since the Pro plan (events metered, not capped);
+//     RAINDROP_CLOUD_PER_TEST=0 turns it off, and the test is then only a span on the job;
+//   - signals carry Raindrop signal types: critic verdicts are `feedback` signals (comment = the critique) and a
+//     repair is an `edit` signal (after = the repaired program) on the event that wrote the program it changes;
+//   - agent-reported gaps (binder: requirement unsupported on the scene; critic: root causes it found; model
+//     refusals) go to Raindrop Self Diagnostics via selfDiagnose, derived from existing agent output, so how
+//     Claude is called is unchanged (no extra tool is given to the model);
 //   - RAINDROP_WORKSHOP=1 mirrors everything to the local Raindrop Workshop daemon (see workshopUrl);
 //   - failures and outcomes are also signals, so Raindrop can group them for the RSI meta-agent.
 // Caveats handled: span properties must be strings, output must be non-empty, payloads are truncated, and no
 // telemetry failure ever propagates into the engineering pipeline (every SDK call is guarded).
 import { randomUUID } from "node:crypto";
 import { Raindrop } from "raindrop-ai";
-import type { AiSpan, BeginRunArgs, FlagValue, RunAttachment, Telemetry, ToolSpanResult } from "./index.ts";
+import type { AiSpan, BeginRunArgs, FlagValue, RunAttachment, SelfDiagnosisArgs, SignalArgs, Telemetry, ToolSpanResult } from "./index.ts";
 
 const USER = "mongomation-worker";
 const MAX = 200_000; // characters per text field (Raindrop limit is 1M; events are 1 MB total)
@@ -30,7 +35,7 @@ const debug = (m: string) => process.env.RAINDROP_DEBUG === "true" && console.wa
 
 type Interaction = ReturnType<Raindrop["begin"]>;
 /** The subset of the SDK this class uses — lets tests inject a recording fake. */
-export type RaindropClient = Pick<Raindrop, "begin" | "resumeInteraction" | "trackAi" | "trackSignal" | "setUserDetails" | "close">;
+export type RaindropClient = Pick<Raindrop, "begin" | "resumeInteraction" | "trackAi" | "trackSignal" | "selfDiagnose" | "setUserDetails" | "close">;
 
 interface Run {
   interaction: Interaction;
@@ -60,10 +65,11 @@ function guard<T>(fn: () => T, fallback: T): T {
 }
 
 export interface RaindropTelemetryOptions {
-  /** Per-test cloud events (RAINDROP_CLOUD_PER_TEST=1). Default off to stay inside the free tier's monthly event
-   *  budget: each test is then only a tool span on the job event (in cloud and, mirrored, in Workshop). A
-   *  Workshop-only per-test event is not possible: Workshop 0.1.21 discards /v1/events/track (trackAi), and a second
-   *  key-less SDK client would share — and could break — the main client's OpenTelemetry export. */
+  /** Per-test cloud events. Default ON (Pro plan: events are metered, not capped; raindrop.ai/docs/platform/plans).
+   *  RAINDROP_CLOUD_PER_TEST=0 turns them off (e.g. back on Hobby's 1,000 events/month), and each test is then only
+   *  a tool span on the job event. A Workshop-only per-test event is not possible: Workshop 0.1.21 discards
+   *  /v1/events/track (trackAi), and a second key-less SDK client would share — and could break — the main
+   *  client's OpenTelemetry export. */
   perTestCloud?: boolean;
 }
 
@@ -74,8 +80,8 @@ export class RaindropTelemetry implements Telemetry {
   private runs = new Map<string, Run>();
 
   constructor(writeKey: string, client?: RaindropClient, opts: RaindropTelemetryOptions = {}) {
-    this.perTestCloud = opts.perTestCloud ?? process.env.RAINDROP_CLOUD_PER_TEST === "1";
-    this.rd = client ?? new Raindrop({ writeKey, projectId: process.env.RAINDROP_PROJECT_ID || undefined, debugLogs: process.env.RAINDROP_DEBUG === "true", localWorkshopUrl: workshopUrl() });
+    this.perTestCloud = opts.perTestCloud ?? !/^(0|false|no|off)$/i.test(process.env.RAINDROP_CLOUD_PER_TEST?.trim() ?? "");
+    this.rd = client ?? new Raindrop({ writeKey, projectId: process.env.RAINDROP_PROJECT_ID || undefined, debugLogs: process.env.RAINDROP_DEBUG === "true", localWorkshopUrl: workshopUrl(), redactPii: process.env.RAINDROP_REDACT_PII === "1" || undefined });
     // Identify the worker so Raindrop's Users view shows which rig / model routing produced the events.
     guard(
       () =>
@@ -170,7 +176,12 @@ export class RaindropTelemetry implements Telemetry {
             properties: { run_id: args.runId, agent: args.agent, failed: true, ...parent },
             ...this.flagsOf(run),
           });
-          if (typeof ret === "string") this.rd.trackSignal({ eventId, name: "agent_call_failed", sentiment: "NEGATIVE", properties: { agent: args.agent, error: message.slice(0, 500) } });
+          if (typeof ret === "string") {
+            this.rd.trackSignal({ eventId, name: "agent_call_failed", sentiment: "NEGATIVE", properties: { agent: args.agent, error: message.slice(0, 500) } });
+            // A refusal is the model reporting it cannot do the task: a self-diagnostic, not just an error.
+            if ((err as Error | undefined)?.name === "LlmRefusal" || /declined the/.test(message))
+              this.rd.selfDiagnose({ eventId, category: "refusal", source: args.agent, description: message.slice(0, 2000), properties: { agent: args.agent } });
+          }
         }, undefined),
     };
   }
@@ -220,11 +231,31 @@ export class RaindropTelemetry implements Telemetry {
     }, null);
   }
 
-  signal(args: { runId: string; name: string; eventId?: string | null; properties?: Record<string, unknown> }) {
+  signal(args: SignalArgs) {
     guard(() => {
       const eventId = args.eventId ?? this.runs.get(args.runId)?.eventId;
       if (!eventId) return;
-      this.rd.trackSignal({ eventId, name: args.name, sentiment: NEGATIVE.test(args.name) ? "NEGATIVE" : "POSITIVE", properties: strProps(args.properties) });
+      const sentiment: "POSITIVE" | "NEGATIVE" = args.sentiment ?? (NEGATIVE.test(args.name) ? "NEGATIVE" : "POSITIVE");
+      const base = { eventId, name: args.name, sentiment, properties: strProps(args.properties) };
+      if (args.type === "feedback") this.rd.trackSignal({ ...base, type: "feedback", ...(args.comment && { comment: cut(args.comment, 20_000) }) });
+      else if (args.type === "edit") this.rd.trackSignal({ ...base, type: "edit", ...(args.after && { after: cut(args.after, MAX_ATTACHMENT) }) });
+      else if (args.type === "agent") this.rd.trackSignal({ ...base, type: "agent" });
+      else this.rd.trackSignal(base);
+    }, undefined);
+  }
+
+  selfDiagnose(args: SelfDiagnosisArgs) {
+    guard(() => {
+      const eventId = args.eventId ?? this.runs.get(args.runId)?.eventId;
+      if (!eventId) return;
+      this.rd.selfDiagnose({
+        eventId,
+        category: args.category,
+        source: args.source,
+        description: cut(args.description, 4000),
+        ...(args.sentiment && { sentiment: args.sentiment }),
+        properties: { run_id: args.runId, ...strProps(args.properties) },
+      });
     }, undefined);
   }
 
