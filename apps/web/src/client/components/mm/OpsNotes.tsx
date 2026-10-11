@@ -69,6 +69,11 @@ export function OpsCard({ data, children }: { data: OpsData | null; children?: R
             ) : (
               <EmptyState>No alerts · rig heartbeat, job heartbeats and queue are healthy</EmptyState>
             )}
+            {ack.error && (
+              <p role="alert" className="font-mono text-[10.5px] text-stop-300">
+                {ack.error.message}
+              </p>
+            )}
 
             {data.digest && (
               <div>
@@ -105,7 +110,9 @@ export function NotesCard({ projectId, data, children }: { projectId: string | n
   const add = useAppMutation<{ projectId: string; body: string }>('addNote');
   const del = useAppMutation<{ noteId: string }>('deleteNote');
   const explain = useAppMutation<{ projectId: string }>('explainFailure');
-  const canWrite = !!data?.available && data.viewer.signedIn;
+  const signedIn = !!data?.available && data.viewer.signedIn;
+  const canWrite = signedIn && !!data?.viewer.verified;
+  const failure = add.error ?? del.error ?? explain.error;
 
   return (
     <Panel
@@ -121,7 +128,9 @@ export function NotesCard({ projectId, data, children }: { projectId: string | n
               !data.ai.configured
                 ? `AI not configured: add a ${data.ai.provider === 'google' ? 'Gemini' : 'OpenAI'} key in Modelence Cloud → AI → Integrations`
                 : !canWrite
-                  ? 'Sign in to ask for an explanation'
+                  ? signedIn
+                    ? 'Verify your email address to ask for an explanation'
+                    : 'Sign in to ask for an explanation'
                   : `Explain the failures with ${data.ai.provider} ${data.ai.model}`
             }
             className="inline-flex items-center gap-1.5 rounded border border-meta-500/50 px-2 py-1 font-mono text-[10.5px] uppercase tracking-wider text-meta-300 transition-colors enabled:hover:bg-meta-500/10 disabled:opacity-40"
@@ -162,7 +171,14 @@ export function NotesCard({ projectId, data, children }: { projectId: string | n
                 </button>
               </form>
             ) : (
-              <p className="font-mono text-[10.5px] text-plant-500">Sign in with a verified email to add notes.</p>
+              <p className="font-mono text-[10.5px] text-plant-500">
+                {signedIn ? 'Verify your email address (link in your inbox) to add notes.' : 'Sign in with a verified email to add notes.'}
+              </p>
+            )}
+            {failure && (
+              <p role="alert" className="font-mono text-[10.5px] text-stop-300">
+                {failure.message}
+              </p>
             )}
             {data.items.length ? (
               <ul className="space-y-1.5">

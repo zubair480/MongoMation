@@ -1,0 +1,76 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap');
+/* Control room styles from prototype/ui-redesign/room.html, scoped to .mmroom */
+.mmroom{--ink:#0B0B0C;--mute:#6B7079;--line:#E7E7E9;--or:#FF5A1F;--glass:rgba(255,255,255,.86);--ease:cubic-bezier(.2,.8,.2,1)}
+.mmroom *, .mmroom{box-sizing:border-box}
+.mmroom, .mmroom{margin:0;height:100%;overflow:hidden;background:#F3F4F6;color:var(--ink);font:14px/1.45 Geist,system-ui,sans-serif}
+.mmroom .mono{font-family:"Geist Mono",ui-monospace,monospace}
+.mmroom #host{position:fixed;inset:0}
+.mmroom header{position:fixed;top:0;left:0;right:0;height:56px;display:flex;align-items:center;gap:24px;padding:0 28px;z-index:5;pointer-events:none}
+.mmroom header>*{pointer-events:auto}
+.mmroom .brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:-.01em}
+.mmroom .brand svg{width:22px;height:22px}
+.mmroom .crumbs{display:flex;gap:8px;align-items:center;font:500 12px "Geist Mono",monospace;color:var(--mute)}
+.mmroom .crumbs b{color:var(--ink);font-weight:500}
+.mmroom .crumbs .sep{opacity:.4}
+.mmroom .lamps{margin-left:auto;display:flex;gap:18px;font:500 11px "Geist Mono",monospace;color:var(--mute);letter-spacing:.04em}
+.mmroom .lamps i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ink);margin-right:6px;vertical-align:1px}
+.mmroom .lamps i.live{background:var(--or);animation:breathe 2.4s ease-in-out infinite}
+@keyframes breathe{50%{box-shadow:0 0 0 5px rgba(255,90,31,.15)}}
+.mmroom #stage{position:fixed;left:50%;top:76px;transform:translateX(-50%);font:500 11px "Geist Mono",monospace;letter-spacing:.12em;color:var(--ink);background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--line);padding:8px 14px;border-radius:4px;opacity:0;transition:opacity .3s var(--ease),transform .3s var(--ease);z-index:5;white-space:nowrap}
+.mmroom #stage.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.mmroom #intro{position:fixed;left:28px;bottom:32px;z-index:4;max-width:460px;transition:opacity .4s var(--ease),transform .4s var(--ease)}
+.mmroom #intro .k{font:500 11px "Geist Mono",monospace;letter-spacing:.12em;color:var(--mute)}
+.mmroom #intro h1{font-size:52px;line-height:1;letter-spacing:-.03em;font-weight:500;margin:10px 0 12px}
+.mmroom #intro p{color:var(--mute);margin:0 0 18px}
+.mmroom #intro.away{opacity:0;transform:translateY(12px);pointer-events:none}
+.mmroom .btn{font:500 13px Geist,sans-serif;height:40px;padding:0 16px;border-radius:6px;border:1px solid var(--ink);background:var(--ink);color:#fff;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:transform .12s var(--ease),box-shadow .2s var(--ease)}
+.mmroom .btn:active{transform:scale(.98)}
+.mmroom .btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(255,90,31,.45)}
+.mmroom .btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+.mmroom .btn.ghost:hover{border-color:var(--ink)}
+.mmroom .cab-tag{display:flex;align-items:center;gap:8px;padding:5px 9px;background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:4px;font:500 11px "Geist Mono",monospace;white-space:nowrap;transition:opacity .3s var(--ease)}
+.mmroom .cab-tag span:last-child{color:var(--mute)}
+.mmroom .cab-tag.hidden{opacity:0}
+.mmroom .dot{width:6px;height:6px;border-radius:50%;background:#C9CDD3}
+.mmroom .dot.running{background:var(--ink)}
+.mmroom .dot.fault{background:#D7261E;animation:breathe 1s infinite}
+.mmroom .plc-tag{display:flex;flex-direction:column;gap:3px;padding:8px 11px;background:#fff;border:1px solid var(--ink);border-radius:4px;font:500 11px "Geist Mono",monospace;white-space:nowrap;transform:translateY(-10px);animation:pop .35s var(--ease)}
+.mmroom .plc-tag b{font-weight:600}
+.mmroom .plc-tag i{font-style:normal;color:var(--or)}
+@keyframes pop{from{opacity:0;transform:translateY(0) scale(.96)}}
+.mmroom #tip{position:fixed;z-index:6;pointer-events:none;background:#fff;border:1px solid var(--line);border-radius:4px;padding:8px 10px;font:12px Geist,sans-serif;box-shadow:0 8px 24px rgba(11,11,12,.08);display:none}
+.mmroom #tip b{font-family:"Geist Mono",monospace;font-weight:500}
+.mmroom #tip small{display:block;color:var(--mute);font:11px "Geist Mono",monospace;margin-top:2px}
+.mmroom #card{position:fixed;right:28px;top:96px;width:320px;z-index:5;background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:8px;padding:20px;transform:translateX(24px);opacity:0;pointer-events:none;transition:all .4s var(--ease)}
+.mmroom #card.on{transform:none;opacity:1;pointer-events:auto}
+.mmroom #card .k{font:500 11px "Geist Mono",monospace;letter-spacing:.12em;color:var(--mute)}
+.mmroom #card h2{font-size:28px;letter-spacing:-.02em;font-weight:500;margin:6px 0 14px}
+.mmroom #card dl{display:grid;grid-template-columns:96px 1fr;gap:8px 12px;margin:0 0 18px;font-size:13px}
+.mmroom #card dt{color:var(--mute);font:11px "Geist Mono",monospace;letter-spacing:.06em;text-transform:uppercase;padding-top:2px}
+.mmroom #card dd{margin:0;font-family:"Geist Mono",monospace;font-size:12px}
+.mmroom #card .row{display:flex;gap:8px}
+.mmroom #handoff{position:fixed;inset:0;z-index:20;background:#fff;opacity:0;pointer-events:none;transition:opacity .55s var(--ease);display:grid;place-items:center}
+.mmroom #handoff.on{opacity:1;pointer-events:auto}
+.mmroom #handoff .in{display:flex;flex-direction:column;align-items:center;gap:12px;font:500 12px "Geist Mono",monospace;color:var(--mute);transform:translateY(6px);transition:transform .55s var(--ease)}
+.mmroom #handoff.on .in{transform:none}
+.mmroom #handoff b{color:var(--ink);font-weight:500}
+.mmroom #handoff .bar{width:160px;height:1px;background:var(--line);overflow:hidden}
+.mmroom #handoff .bar i{display:block;height:100%;width:0;background:var(--or)}
+.mmroom #handoff.on .bar i{animation:load .9s var(--ease) forwards}
+@keyframes load{to{width:100%}}
+.mmroom .hint{position:fixed;right:28px;bottom:28px;z-index:4;font:11px "Geist Mono",monospace;color:var(--mute)}
+.mmroom .hint kbd{border:1px solid var(--line);border-radius:3px;padding:1px 5px;background:#fff;color:var(--ink)}
+
+.mmroom{position:fixed;inset:0}
+.mmroom .lamps i.off{background:#C9CDD3}
+.mmroom .dashlink{color:var(--ink);text-decoration:none;border:1px solid var(--line);border-radius:4px;padding:3px 8px;background:#fff}
+.mmroom .btn[disabled]{cursor:not-allowed}
+
+/* QA-11c: soft white scrims so the hall never crosses the top bar or the hero text */
+.mmroom .scrim{position:fixed;pointer-events:none;z-index:3;transition:opacity .4s var(--ease)}
+.mmroom .scrim.top{left:0;right:0;top:0;height:96px;background:linear-gradient(to bottom,rgba(243,244,246,.92),rgba(243,244,246,.6) 55%,rgba(243,244,246,0))}
+.mmroom .scrim.hero{left:0;bottom:0;width:min(760px,100vw);height:380px;background:radial-gradient(120% 100% at 0% 100%,rgba(243,244,246,.95) 0%,rgba(243,244,246,.82) 45%,rgba(243,244,246,0) 75%)}
+.mmroom .scrim.hero.away{opacity:0}
+/* QA-14: once a cabinet is open the step chip moves to the bottom so it never sits on the PLC callout */
+.mmroom #stage.low{top:auto;bottom:28px}
+@media (max-width:640px){.mmroom #intro h1{font-size:38px}.mmroom #card{left:16px;right:16px;width:auto;top:auto;bottom:16px}.mmroom .hint{display:none}.mmroom header{padding:0 16px;gap:12px}.mmroom .lamps{display:none}}

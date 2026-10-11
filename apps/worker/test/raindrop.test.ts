@@ -36,7 +36,7 @@ const config = { version: 3, routing: { requirements: "fast", codegen: "strong",
 
 test("job interaction: identify, feature flags, sub-agent per model call with a real span, per-test events", async () => {
   const f = fakeSdk();
-  const t = new RaindropTelemetry("wk", f.client);
+  const t = new RaindropTelemetry("wk", f.client, { perTestCloud: true });
   assert.equal(f.of("setUserDetails").length, 1);
 
   const jobEvent = t.beginRun("p1", { event: "engineering_job", input: "spec", properties: { harness_version: 3 }, featureFlags: harnessFlags(config) });
@@ -71,10 +71,86 @@ test("job interaction: identify, feature flags, sub-agent per model call with a 
   assert.deepEqual(sigs.map((s) => [s.name, s.eventId, s.sentiment]), [["simulator_test_failed", t2, "NEGATIVE"], ["repair_budget_exhausted", jobEvent, "NEGATIVE"]]);
 
   t.attach("p1", [{ name: "program.st", value: "PROGRAM", type: "code", language: "pascal" }, { name: "empty", value: "" }]);
-  assert.deepEqual(f.of("addAttachments")[0][2], [{ type: "code", name: "program.st", value: "PROGRAM", role: "output", language: "pascal" }]);
+  // sent as "text": Raindrop's attachment viewer does not display "code" attachments
+  assert.deepEqual(f.of("addAttachments")[0][2], [{ type: "text", name: "program.st", value: "PROGRAM", role: "output" }]);
 
   await t.finishRun("p1", "verified", { status: "verified" });
   assert.equal(f.of("finish").length, 1);
+});
+
+test("per-test cloud events off (default, free-tier budget): the test is only a span on the job", () => {
+  const f = fakeSdk();
+  const t = new RaindropTelemetry("wk", f.client, { perTestCloud: false });
+  const job = t.beginRun("p5", { event: "engineering_job", input: "spec" });
+  const id = t.tool({ name: "simulator_test", runId: "p5", input: { testId: "R1" } }, { ok: false, summary: "R1: failed", durationMs: 5 });
+  assert.equal(id, job, "trace id is the job event");
+  assert.equal(f.of("trackTool").length, 1);
+  assert.equal((f.of("trackTool")[0][2] as { error: string }).error, "R1: failed");
+  assert.equal(f.of("subagent").length, 0);
+  assert.equal(f.of("trackAi").length, 0, "no cloud event per test");
+  // a TEST under an unknown runId (no job interaction, e.g. a benchmark case) creates no cloud event
+  assert.equal(t.tool({ name: "simulator_test", runId: "none", input: { testId: "R1" } }, { ok: true, summary: "ok", durationMs: 1 }), null);
+  assert.equal(f.of("trackAi").length, 0);
+  // a non-test tool call outside any job (CLI script) still gets its own event
+  assert.ok(t.tool({ name: "openplc_compile", runId: "none", input: {} }, { ok: true, summary: "ok", durationMs: 1 }));
+  assert.equal(f.of("trackAi").length, 1);
+});
+
+test("per-test cloud events default off when RAINDROP_CLOUD_PER_TEST is unset", () => {
+  const prev = process.env.RAINDROP_CLOUD_PER_TEST;
+  delete process.env.RAINDROP_CLOUD_PER_TEST;
+  try {
+    const f = fakeSdk();
+    const t = new RaindropTelemetry("wk", f.client);
+    t.beginRun("p6", { event: "engineering_job", input: "spec" });
+    t.tool({ name: "simulator_test", runId: "p6", input: { testId: "R1" } }, { ok: true, summary: "ok", durationMs: 1 });
+    t.tool({ name: "simulator_test", runId: "unknown", input: { testId: "R2" } }, { ok: false, summary: "bad", durationMs: 1 });
+    assert.equal(f.of("trackAi").length, 0);
+    assert.equal(f.of("trackTool").length, 1);
+  } finally {
+    if (prev !== undefined) process.env.RAINDROP_CLOUD_PER_TEST = prev;
+  }
+});
+
+test("a skipped tool step (preflight unavailable) is a non-error span", () => {
+  const f = fakeSdk();
+  const t = new RaindropTelemetry("wk", f.client, { perTestCloud: false });
+  t.beginRun("p7", { event: "engineering_job", input: "spec" });
+  t.tool({ name: "preflight_compile", runId: "p7", input: { sourceHash: "h" } }, { ok: false, skipped: true, summary: "unavailable", durationMs: 1 });
+  const tt = f.of("trackTool")[0][2] as { error?: string; properties: Record<string, string> };
+  assert.equal(tt.error, undefined);
+  assert.equal(tt.properties.skipped, "true");
+  t.tool({ name: "preflight_compile", runId: "p7", input: { sourceHash: "h" } }, { ok: false, summary: "failed", durationMs: 1 });
+  assert.equal((f.of("trackTool")[1][2] as { error?: string }).error, "failed");
+});
+
+test("RSI gate signals: names, sentiment, and an explicit event id is required", async () => {
+  const { gateSignalName } = await import("../src/rsi/evolve.ts");
+  assert.equal(gateSignalName("kept"), "harness_change_kept");
+  assert.equal(gateSignalName("rolled_back"), "harness_change_rolled_back");
+  const f = fakeSdk();
+  const t = new RaindropTelemetry("wk", f.client, { perTestCloud: false });
+  // no interaction under benchmark-<job>: without an eventId the signal is dropped (the old bug)
+  t.signal({ runId: "benchmark-j1", name: "harness_change_kept" });
+  assert.equal(f.of("trackSignal").length, 0);
+  t.signal({ runId: "benchmark-j1", name: "harness_change_kept", eventId: "meta-ev" });
+  t.signal({ runId: "benchmark-j1", name: "harness_change_rolled_back", eventId: "meta-ev" });
+  t.signal({ runId: "rsi-j1", name: "harness_proposal_rejected", eventId: "meta-ev2", properties: { violations: "x" } });
+  const s = f.of("trackSignal").map((c) => c[1] as { eventId: string; name: string; sentiment: string });
+  assert.deepEqual(s.map((x) => [x.eventId, x.name, x.sentiment]), [
+    ["meta-ev", "harness_change_kept", "POSITIVE"],
+    ["meta-ev", "harness_change_rolled_back", "NEGATIVE"],
+    ["meta-ev2", "harness_proposal_rejected", "NEGATIVE"],
+  ]);
+});
+
+test("workshopUrl is opt-in", async () => {
+  const { workshopUrl } = await import("../src/telemetry/raindrop.ts");
+  assert.equal(workshopUrl({}), false);
+  assert.equal(workshopUrl({ NODE_ENV: "development" }), false);
+  assert.equal(workshopUrl({ RAINDROP_WORKSHOP: "1" }), "http://localhost:5899/v1/");
+  assert.equal(workshopUrl({ RAINDROP_WORKSHOP: "http://127.0.0.1:5900/v1/" }), "http://127.0.0.1:5900/v1/");
+  assert.equal(workshopUrl({ RAINDROP_LOCAL_DEBUGGER: "http://h:1/v1/", RAINDROP_WORKSHOP: "0" }), "http://h:1/v1/");
 });
 
 test("a resumed job continues the earlier interaction instead of starting a new one", () => {

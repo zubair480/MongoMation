@@ -27,15 +27,20 @@ export const embeddingMode = (): EmbeddingMode => (process.env.EMBEDDING_MODE as
 const MODEL = () => process.env.EMBEDDING_MODEL || "voyage-4";
 export type FusionMode = "rank" | "score" | "client" | "vector";
 export const fusionMode = (): FusionMode => (process.env.SEARCH_FUSION as FusionMode) || "rank";
-export const rerankEnabled = () => process.env.SEARCH_RERANK === "voyage" && Boolean(process.env.VOYAGE_API_KEY);
+// Read at call time (keys may be rotated without a restart of anything that re-reads env).
+const voyageKey = () => (process.env.VOYAGE_API_KEY ?? "").trim();
+export const rerankEnabled = () => process.env.SEARCH_RERANK === "voyage" && Boolean(voyageKey());
 
 export const SEARCH_READ: AggregateOptions = { readConcern: { level: "local" } };
-const voyageBase = () => process.env.VOYAGE_BASE_URL || "https://ai.mongodb.com/v1";
+/** VOYAGE_BASE_URL wins; otherwise legacy Voyage platform keys (`pa-…`) go to api.voyageai.com and
+ *  MongoDB Atlas model API keys (`al-…`, the default) to ai.mongodb.com. Keys only work on their own host. */
+export const voyageBase = () =>
+  (process.env.VOYAGE_BASE_URL?.trim() || (voyageKey().startsWith("pa-") ? "https://api.voyageai.com/v1" : "https://ai.mongodb.com/v1")).replace(/\/+$/, "");
 
 export async function embed(texts: string[], inputType: "document" | "query"): Promise<number[][]> {
   const res = await fetch(`${voyageBase()}/embeddings`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${process.env.VOYAGE_API_KEY}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${voyageKey()}` },
     body: JSON.stringify({ input: texts, model: MODEL(), input_type: inputType }),
   });
   if (!res.ok) throw new Error(`embedding request failed: ${res.status} ${await res.text()}`);
@@ -47,7 +52,7 @@ export async function embed(texts: string[], inputType: "document" | "query"): P
 export async function rerank(query: string, documents: string[], topK: number, fetchImpl: typeof fetch = fetch): Promise<{ index: number; score: number }[]> {
   const res = await fetchImpl(`${voyageBase()}/rerank`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${process.env.VOYAGE_API_KEY}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${voyageKey()}` },
     body: JSON.stringify({ query, documents, model: process.env.RERANK_MODEL || "rerank-2.5", top_k: topK, truncation: true }),
   });
   if (!res.ok) throw new Error(`rerank request failed: ${res.status} ${await res.text()}`);

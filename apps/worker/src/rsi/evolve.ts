@@ -226,6 +226,8 @@ async function runCase(
   return row;
 }
 
+export const gateSignalName = (verdict: "kept" | "rolled_back") => (verdict === "kept" ? "harness_change_kept" : "harness_change_rolled_back");
+
 export async function runBenchmarkJob(
   args: { jobId: string; candidateVersion?: number; limits?: RunLimits },
   deps: { plc: PlcRuntime; sim: Simulator; rigId: string; loadScene: (id?: string) => Promise<SceneDefinition> },
@@ -263,7 +265,10 @@ export async function runBenchmarkJob(
     await recordVerdict(candidate.version, { verdict: d.verdict, scores: candidateScores, parentScores, gateNote: d.reasons.join("; ") }, session);
     await col.proposals().updateOne({ candidateVersion: candidate.version }, { $set: { verdict: d.verdict, scores: candidateScores, parentScores, gateNote: d.reasons.join("; "), decidedAt: new Date(), manifestHash: hash, benchmarkSubset: subset } }, { session });
   });
-  telemetry.signal({ runId: `benchmark-${args.jobId}`, name: d.verdict === "kept" ? "harness_change_kept" : "harness_change_rolled_back", properties: { version: candidate.version, cases: train.length } });
+  // No interaction is ever begun under `benchmark-<jobId>`, so the signal must name an event explicitly: the meta-agent
+  // event that proposed this candidate (otherwise telemetry.signal finds no event and silently drops it).
+  const proposal = await col.proposals().findOne({ candidateVersion: candidate.version }, { projection: { metaTraceId: 1 } });
+  telemetry.signal({ runId: `benchmark-${args.jobId}`, name: gateSignalName(d.verdict), eventId: (proposal as { metaTraceId?: string | null } | null)?.metaTraceId ?? null, properties: { version: candidate.version, cases: train.length, benchmark_job: args.jobId } });
   return { manifestHash: hash, ...subset, verdict: d.verdict, reasons: d.reasons, parentScores, candidateScores };
 }
 

@@ -10,6 +10,7 @@ import { appStores } from './stores';
 import { failureFacets, searchFailures, suggestFailures } from './search';
 import { artifactLinks } from './artifacts';
 import { liveRigAws } from './liveQueries';
+import { evidenceTimeline, harnessLineage } from './lineage';
 
 // Worker-owned collections are read through a dedicated MongoClient (./atlas.ts) so that Modelence's
 // startup index reconciliation never touches the worker's indexes. `stores` are app-owned only
@@ -55,6 +56,9 @@ const mongomationModule = new Module('mongomation', {
     // AWS: presigned S3 artifact links (fail soft) and rig_status.aws (live).
     artifactLinks,
     liveRigAws,
+    // $graphLookup harness lineage + $unionWith project evidence timeline (lineage.ts).
+    harnessLineage,
+    evidenceTimeline,
   },
 
   // Signed-in, verified users only (guards.ts), rate limited. Job mutations insert one document into `jobs`.

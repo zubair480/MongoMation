@@ -9,8 +9,10 @@
 //     `launch_subagent` dispatch span naming the child event id, and a real `agent:<name>` span with the call's
 //     duration, so the job trace shows requirements → binder → codegen → critic → repair as nested work;
 //   - compile/deploy/test steps are tool spans on the job interaction (with real start time + duration);
-//     failures carry `error`. A step about ONE test (input.testId) additionally gets its own event (a sub-agent
-//     of the job), so the trace id stored on each test result points at exactly that test;
+//     failures carry `error`. With RAINDROP_CLOUD_PER_TEST=1 a step about ONE test (input.testId) additionally
+//     gets its own event (a sub-agent of the job, trace id per test). Default off (free-tier event budget): the
+//     test is only a span on the job and its trace id is the job event;
+//   - RAINDROP_WORKSHOP=1 mirrors everything to the local Raindrop Workshop daemon (see workshopUrl);
 //   - failures and outcomes are also signals, so Raindrop can group them for the RSI meta-agent.
 // Caveats handled: span properties must be strings, output must be non-empty, payloads are truncated, and no
 // telemetry failure ever propagates into the engineering pipeline (every SDK call is guarded).
@@ -57,12 +59,22 @@ function guard<T>(fn: () => T, fallback: T): T {
   }
 }
 
+export interface RaindropTelemetryOptions {
+  /** Per-test cloud events (RAINDROP_CLOUD_PER_TEST=1). Default off to stay inside the free tier's monthly event
+   *  budget: each test is then only a tool span on the job event (in cloud and, mirrored, in Workshop). A
+   *  Workshop-only per-test event is not possible: Workshop 0.1.21 discards /v1/events/track (trackAi), and a second
+   *  key-less SDK client would share — and could break — the main client's OpenTelemetry export. */
+  perTestCloud?: boolean;
+}
+
 export class RaindropTelemetry implements Telemetry {
   readonly enabled = true;
   private rd: RaindropClient;
+  private perTestCloud: boolean;
   private runs = new Map<string, Run>();
 
-  constructor(writeKey: string, client?: RaindropClient) {
+  constructor(writeKey: string, client?: RaindropClient, opts: RaindropTelemetryOptions = {}) {
+    this.perTestCloud = opts.perTestCloud ?? process.env.RAINDROP_CLOUD_PER_TEST === "1";
     this.rd = client ?? new Raindrop({ writeKey, projectId: process.env.RAINDROP_PROJECT_ID || undefined, debugLogs: process.env.RAINDROP_DEBUG === "true", localWorkshopUrl: workshopUrl() });
     // Identify the worker so Raindrop's Users view shows which rig / model routing produced the events.
     guard(
@@ -167,7 +179,10 @@ export class RaindropTelemetry implements Telemetry {
     return guard(() => {
       const run = this.runs.get(args.runId);
       const testId = typeof args.input.testId === "string" || typeof args.input.testId === "number" ? String(args.input.testId) : null;
-      const childEventId = testId ? randomUUID() : null;
+      // Per-test cloud events only when opted in. A test under an unknown runId (no job interaction, e.g. a
+      // benchmark case) has no job to hang a span on, so with per-test cloud off it is not sent at all.
+      if (testId && !run && !this.perTestCloud) return null;
+      const childEventId = testId && this.perTestCloud ? randomUUID() : null;
       if (run) {
         run.interaction.trackTool({
           name: args.name,
@@ -175,13 +190,14 @@ export class RaindropTelemetry implements Telemetry {
           output: { summary: result.summary, evidenceIds: result.evidenceIds ?? [] },
           durationMs: result.durationMs,
           startTime: Date.now() - result.durationMs,
-          properties: strProps({ ok: result.ok, ...(childEventId && { child_event_id: childEventId }) }),
-          ...(result.ok ? {} : { error: result.summary || `${args.name} failed` }),
+          properties: strProps({ ok: result.ok, ...(result.skipped && { skipped: true }), ...(childEventId && { child_event_id: childEventId }) }),
+          // A skipped step (tool unavailable) is not an error span.
+          ...(result.ok || result.skipped ? {} : { error: result.summary || `${args.name} failed` }),
         });
         if (!childEventId) return run.eventId;
         this.dispatch(run, args.name, childEventId, args.input, { test_id: testId! });
       }
-      // Own event: a per-test step, or a tool call with no job interaction (e.g. a CLI script).
+      // Own event: a per-test step (RAINDROP_CLOUD_PER_TEST=1), or a tool call with no job interaction (CLI script).
       const eventId = childEventId ?? randomUUID();
       const ret = this.rd.trackAi({
         eventId,
@@ -220,11 +236,9 @@ export class RaindropTelemetry implements Telemetry {
         run.interaction.addAttachments(
           attachments
             .filter((a) => a.value)
-            .map((a) =>
-              a.type === "code"
-                ? { type: "code" as const, name: a.name, value: cut(a.value, MAX_ATTACHMENT), role: a.role ?? "output", ...(a.language && { language: a.language }) }
-                : { type: "text" as const, name: a.name, value: cut(a.value, MAX_ATTACHMENT), role: a.role ?? "output" },
-            ),
+            // Always "text": Raindrop's dashboard attachment viewer renders text/image/iframe only — "code"
+            // attachments are ingested but never displayed (raindrop.ai/docs/sdk/rust#attachments).
+            .map((a) => ({ type: "text" as const, name: a.name, value: cut(a.value, MAX_ATTACHMENT), role: a.role ?? "output" })),
         ),
       undefined,
     );

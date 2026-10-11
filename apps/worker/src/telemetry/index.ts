@@ -17,6 +17,8 @@ export interface ToolSpanResult {
   durationMs: number;
   /** Atlas ids of the evidence this tool call produced (compile log, measurement batch, ...). */
   evidenceIds?: string[];
+  /** The step did not run (e.g. tool not installed): recorded as a non-error span. */
+  skipped?: boolean;
 }
 
 export type FlagValue = string | number | boolean;
@@ -24,7 +26,7 @@ export type FlagValue = string | number | boolean;
 export interface RunAttachment {
   name: string;
   value: string;
-  /** "code" renders with syntax highlighting in Raindrop. Default "text". */
+  /** Hint only: Raindrop's viewer does not display "code" attachments, so the Raindrop sink sends all as "text". */
   type?: "code" | "text";
   language?: string;
   role?: "input" | "output";

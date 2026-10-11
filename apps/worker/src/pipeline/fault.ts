@@ -5,7 +5,7 @@
 //   Phase C: only if there is evidence of a harness weakness, ask the meta-agent for a harness change and
 //            send it to guardrails + benchmark + gate (rsi/evolve.ts). Handled faults do not invent failures.
 import type { BoundRequirement, FaultScenario, HarnessConfig, IoPoint, SceneDefinition } from "@mongomation/types";
-import { ObjectId } from "mongodb";
+import { ObjectId, type Document } from "mongodb";
 import { diagnose, repairLogic, type EngineeringContext } from "../agents/codegen.ts";
 import { col } from "../db/index.ts";
 import { retrieveLessons, similarFailures } from "../harness/memory.ts";
@@ -28,6 +28,30 @@ export function chooseFault(scene: SceneDefinition, reqs: BoundRequirement[], re
   for (const r of reqs) if (r.support === "supported" && FAULT_RELEVANT.has(r.kind)) for (const t of Object.values(r.bindings)) boundTags.set(t, (boundTags.get(t) ?? 0) + 1);
   const ranked = [...scene.faults].sort((a, b) => (boundTags.get(b.tag) ?? 0) - (boundTags.get(a.tag) ?? 0));
   return ranked[0] ?? null;
+}
+
+/** The slice of the plc_versions collection used to allocate a repair version (fakeable in tests). */
+export interface PlcVersionStore {
+  findOne(filter: Document, options: { sort: Document; projection: Document }): Promise<Document | null>;
+  insertOne(doc: Document): Promise<{ insertedId: unknown }>;
+}
+
+/**
+ * Inserts a fault-repair PLC version under the next free number for the project. Repairs stay in the 1000+
+ * band above their base (base 3 -> 1003, as before) but never reuse a number: a second repair on the same
+ * project gets max(version)+1 (e.g. 1004). The unique {projectId, version} index is the arbiter; on a
+ * concurrent E11000 we re-read the max and retry once.
+ */
+export async function insertRepairVersion(store: PlcVersionStore, projectId: string, baseVersion: number, doc: Document) {
+  for (let attempt = 0; ; attempt++) {
+    const top = await store.findOne({ projectId }, { sort: { version: -1 }, projection: { version: 1 } });
+    const version = Math.max(Number(top?.version ?? 0) + 1, baseVersion + 1000);
+    try {
+      return { ...(await store.insertOne({ projectId, version, ...doc })), version };
+    } catch (e) {
+      if (attempt >= 1 || (e as { code?: number }).code !== 11000) throw e;
+    }
+  }
 }
 
 export async function runFaultAndImprove(
@@ -121,7 +145,7 @@ export async function runFaultAndImprove(
   const { source, sourceHash } = assembleProgram(io, fix.data, `MongoMation ${projectId} fault repair (${fault.id})`);
   const lint = lintLogic(io, fix.data);
   const pf = lint.length ? null : await preflight(source);
-  const newVersion = await col.plcVersions().insertOne({ projectId, version: Number(version.version) + 1000, source, sourceHash, createdBy: "repair", reason: `fault ${fault.id}`, harnessVersion: config.version, diffFromPrevious: lineDiff(String(version.source), source), diagnosisId: String(diagDoc.insertedId), createdAt: new Date() });
+  const newVersion = await insertRepairVersion(col.plcVersions(), projectId, Number(version.version), { source, sourceHash, createdBy: "repair", reason: `fault ${fault.id}`, harnessVersion: config.version, diffFromPrevious: lineDiff(String(version.source), source), diagnosisId: String(diagDoc.insertedId), createdAt: new Date() });
   const repairRecord = { projectId, fromVersionId: String(version._id), toVersionId: String(newVersion.insertedId), diagnosisId: String(diagDoc.insertedId), lint, preflight: pf?.status ?? "skipped", createdAt: new Date() };
   if (lint.length || pf?.status === "failed") {
     await col.repairs().insertOne({ ...repairRecord, outcome: "did_not_compile" });

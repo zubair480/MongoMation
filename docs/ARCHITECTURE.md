@@ -18,23 +18,25 @@ simulation on AWS, MongoDB Atlas as memory — and nothing is graded by the mode
 flowchart LR
   UI[Modelence dashboard] -- jobs (insert only) --> DB[(MongoDB Atlas sandbox)]
   UI -- reads --> DB
-  W[Worker in AWS VPC] <--> DB
+  W[Worker on team laptop] <--> DB
   W --> LLM[Claude API]
   W --> RD[Raindrop traces + signals]
-  W -- HTTP private --> PLC[OpenPLC runtime]
-  W -- Web API private --> FIO[Factory I/O on Windows GPU]
+  W -- HTTPS --> GW[Team HTTPS gateway]
+  GW --> PLC[OpenPLC Runtime v4 on EC2]
+  GW --> FIO[Factory I/O on EC2 Windows GPU]
   PLC <-- Modbus TCP --> FIO
   DCV[Amazon DCV] -. 3D view .-> FIO
 ```
 
 ## 2. Loop 1 — engineering repair (improves the PLC program)
 
-`requirements → io_design → state_machine? → plc_code → preflight (MatIEC) → compile (OpenPLC) → deploy → simulate (Factory I/O) → tests → diagnosis → repair → … → verification → deliver`
+`requirements → io_design → state_machine? → plc_code → static checks → STruC++ build (OpenPLC Runtime v4 bundle) → compile (OpenPLC) → deploy → simulate (Factory I/O) → tests → diagnosis → repair → … → verification → deliver`
 
 - The **harness writes every located variable** from the scene's verified I/O map; the model writes internal
   variables and logic only, so addresses can't be hallucinated (`pipeline/st.ts`).
-- **Static checks** (inputs never written, every output assigned, no WHILE/REPEAT) and a **local MatIEC preflight**
-  catch errors in ~1.5 s before the shared rig is touched. The OpenPLC runtime compile is authoritative.
+- **Static checks** (inputs never written, every output assigned, no WHILE/REPEAT) catch errors locally before the
+  shared rig is touched. The **STruC++ build** targets OpenPLC Runtime v4. A MatIEC preflight is optional and not
+  available in this setup. The OpenPLC runtime compile is authoritative.
 - **Tests are data** (`TestCase.steps`), executed against the live rig while sampling tags every 50 ms; the
   **pure grader** decides from samples: a pass needs a measured sample, missing data is BLOCKED, never a pass.
 - A requirement is **VERIFIED** only if every public and hidden test covering it passed with evidence.
@@ -80,7 +82,36 @@ Vector Search: `lessons_vec`, `diagnoses_vec` (Voyage embeddings; retrieval fall
 
 | Sponsor | Where |
 |---|---|
-| MongoDB Atlas | all state, queue, checkpoints, time-series measurements, vector memory, versioned harness, MCP for dev inspection |
-| Raindrop | one interaction per job, every model call (`trackAi` + usage), tool spans with errors, signals for failures/verdicts; Query API/MCP for RSI evidence |
-| AWS | EC2 Windows GPU (Factory I/O), OpenPLC, worker in the VPC, DCV for the 3D view |
-| Modelence | the dashboard app and its deployment |
+| MongoDB Atlas | system of record + control plane: durable job queue (atomic claim, heartbeats, stale recovery); change streams on `jobs` (worker wake) with pre/post images → `job_transitions` audit and harness-immutability audit; multi-doc transactions for RSI candidate/verdict; time-series `measurements`; Vector Search with automated embedding (Voyage `voyage-4`) + Atlas Search (fuzzy/autocomplete/facets) fused by `$rankFusion` for failure memory; `$jsonSchema` validators (e.g. `harness_versions.run_regression_tests` must be true); TTL lifecycle; least-privilege web user; window-function analytics; MCP for dev inspection |
+| Raindrop | one interaction per job, every model call (`trackAi` + usage), tool spans and subagents, all tagged with `harness_version` feature flags; crash resume via `resumeInteraction`; signals for failures/verdicts; Query API read-back feeds the RSI meta-agent; dashboard + "failing interactions" dataset; Workshop (local, §7) evals by harness version (`npm run raindrop:eval`) and Workshop MCP for the self-healing loop |
+| AWS | rig on EC2 (OpenPLC Runtime v4 + Factory I/O), reached through the team HTTPS gateway; deterministic gate (hidden grader + regression tests + `rsi/gate.ts`) around the LLM; flag-gated AWS SDK modules (`apps/worker/src/aws/`: S3 artifacts, CloudWatch metrics/logs/alarms, SSM health probe) and a CloudFormation template in `infra/aws/` — not deployed unless the flags are set |
+| Modelence | the deployed dashboard: live queries over change streams (no polling), channels, cron jobs (rig/job watch, ops digest), Stores, rate limits, roles + verified-email guards, telemetry, `@modelence/ai` failure explanations |
+
+## 7. Raindrop Workshop: local debugger + evals (free tier)
+
+We are on Raindrop's free (Hobby, ~1,000 cloud events/month) tier: no hosted Evals/Experiments. Evals run in
+[Raindrop Workshop](https://github.com/raindrop-ai/workshop) (MIT, local daemon + UI on `localhost:5899`, SQLite at
+`~/.raindrop/raindrop_workshop.db`).
+
+- **Install / start**: `curl -fsSL https://raindrop.sh/install | bash -s -- --no-setup` (sha256-verified binary in
+  `~/.raindrop/bin`), then `npm run workshop:start` (background, logs `~/mongomation-logs/workshop.log`; the daemon
+  gets only `RAINDROP_QUERY_API_KEY` from `.env`, for cloud-trace import).
+- **Mirror**: `RAINDROP_WORKSHOP=1` (or `RAINDROP_LOCAL_DEBUGGER=<url>`) makes the worker's SDK client mirror every
+  event/span to Workshop while still sending to cloud (`telemetry/raindrop.ts: workshopUrl`). Opt-in only — unset,
+  `localWorkshopUrl: false` disables the SDK's dev auto-detect. `RAINDROP_WORKSHOP=1 npm run raindrop:smoke` checks
+  both sinks.
+- **Event budget**: per-test cloud events are off unless `RAINDROP_CLOUD_PER_TEST=1`; each simulator test stays a
+  tool span (with its error) on the job event. Cloud events per job ≈ 1 job + 1 per model call.
+- **Evals**: `npm run workshop:eval` (= `raindrop:eval`; `scripts/workshop-eval.ts`) lists root job events via the
+  Query API (reads, no ingest cost), imports their traces into Workshop (`/api/cloud/traces/import`), and scores each
+  run from its Workshop spans: final compile passed, simulator pass rate (last attempt per test), repair budget not
+  exhausted, verified, cost (child model-call `cost_usd`), then compares `harness_version` (compile pass, sim pass
+  mean, budget ok, verified, cost per verified project). Each run gets a Workshop annotation (`issue`/`good`,
+  prefixed `[workshop-eval]`); `WORKSHOP_EVAL_STRICT=1` exits 1 on any failing assertion. The old hosted-Evals suite
+  is `deprecated:raindrop:eval:hosted`.
+- **Self-healing loop** (Raindrop cookbook): `.mcp.json` registers the Workshop MCP (`raindrop workshop mcp`) for
+  coding agents. Loop: `npm run workshop:eval` → in the agent, `query_traces` (`SELECT run_id, note FROM annotations
+  WHERE kind='issue'`) → `get_run_outline` / `search_run` / `get_span_payload` on the failing `simulator_test` spans
+  (`import_cloud_trace` for any other cloud event id) → write a failing check, fix the harness or pipeline, re-run the
+  job and `workshop:eval` until the assertion passes → PR. The RSI meta-agent keeps reading cloud signals through the
+  Query API (`raindropEvidence`); the eval's per-version table is the before/after evidence for a harness change.

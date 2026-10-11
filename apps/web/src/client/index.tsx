@@ -45,9 +45,10 @@ renderApp({
       <App />
     </QueryClientProvider>
   ),
-  errorHandler: (error) => {
-    // LoginPage handles this inline with a resend link; skip the duplicate, less actionable toast.
-    if (error instanceof MethodError && error.code === 'EMAIL_NOT_VERIFIED') {
+  errorHandler: (error, methodName) => {
+    // LoginPage handles this inline with a resend link; skip the duplicate, less actionable toast there.
+    // Dashboard mutations (guards.ts) raise the same code for signed-in, unverified users: those must toast.
+    if (error instanceof MethodError && error.code === 'EMAIL_NOT_VERIFIED' && methodName.startsWith('_system.')) {
       return;
     }
     toast.error(error.message);

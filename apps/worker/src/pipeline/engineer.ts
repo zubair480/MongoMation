@@ -153,7 +153,7 @@ export async function runEngineering(input: EngineerInput, deps: EngineerDeps): 
       { upsert: true, returnDocument: "after" },
     );
     const plcVersionId = String(versionDoc!._id);
-    telemetry.attach(projectId, [{ name: `program v${version}.st`, value: source, type: "code", language: "pascal" }, { name: `diff to v${version}`, value: String(versionDoc?.diffFromPrevious ?? "") }]);
+    telemetry.attach(projectId, [{ name: `program v${version}.st`, value: source, type: "text" }, { name: `diff to v${version}`, value: String(versionDoc?.diffFromPrevious ?? "") }]);
     finalVersionId = plcVersionId;
     await col.projects().updateOne({ _id: projectId as never }, { $set: { currentPlcVersionId: plcVersionId, currentVersion: version } });
 
@@ -163,7 +163,7 @@ export async function runEngineering(input: EngineerInput, deps: EngineerDeps): 
       const pf = await runStage(ctx, "preflight", attempt, { sourceHash }, async () => {
         const r = await preflight(source);
         await col.compiles().insertOne({ plcVersionId, stage: "preflight", toolchain: "matiec-iec2c", ...r, createdAt: new Date() });
-        telemetry.tool({ name: "preflight_compile", runId: projectId, input: { sourceHash } }, { ok: r.status === "ok", summary: r.status, durationMs: r.durationMs });
+        telemetry.tool({ name: "preflight_compile", runId: projectId, input: { sourceHash } }, { ok: r.status === "ok", skipped: r.status === "unavailable", summary: r.status, durationMs: r.durationMs });
         return r;
       });
       if (pf.status === "failed") feedback = [`MatIEC compile error: ${pf.log}`];

@@ -29,9 +29,18 @@ function GuestRoute() {
 // Public routes (no auth required). The dashboard is read-only for visitors; its job buttons
 // ask the visitor to sign in, and the server refuses unauthenticated mutations.
 const publicRoutes: RouteObject[] = [
+  // Landing: the 3D control room (Open PLC → /plc/:cab). The dashboard moved to /dashboard.
   {
     path: '/',
+    Component: lazy(() => import('./pages/RoomPage')),
+  },
+  {
+    path: '/dashboard',
     Component: lazy(() => import('./pages/DashboardPage')),
+  },
+  {
+    path: '/plc/:cab',
+    Component: lazy(() => import('./pages/PlcWorkflowPage')),
   },
   {
     path: '/terms',

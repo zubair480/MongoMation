@@ -25,15 +25,37 @@ crashed worker resumes from its last checkpoint. Raindrop traces the agent calls
 
 ## 3. How it uses each sponsor
 
-- **MongoDB Atlas** — the `mongomation` database in the hackathon sandbox: job queue with leases and heartbeats, stage
-  checkpoints, program versions, verdicts, harness versions, a time-series collection for plant measurements, and
-  Atlas Vector Search indexes (Automated Embedding by default) for lesson/failure retrieval. Harness v0 is seeded there.
-- **Raindrop** — traces each agent call and tool step. The RSI loop attaches Raindrop event ids to the failures it
-  cites as evidence for a harness change.
-- **Modelence** — hosts the dashboard. It reads Atlas and writes only to `jobs`.
-- **AWS** — hosts the rig: OpenPLC Runtime v4 (Linux) and Factory I/O (Windows, viewed through Amazon DCV) in a
-  private VPC. Factory I/O is the Modbus client of OpenPLC. The worker reaches both through AWS SSM port forwarding
-  (no public ports).
+- **MongoDB Atlas: system of record and control plane** (db `mongomation`)
+  - Durable job queue: atomic claim, 3 s heartbeats, stale-job recovery with stage checkpoints.
+  - Change streams on `jobs` wake the worker (no polling). Pre/post images feed a `job_transitions` audit and a
+    harness-immutability audit.
+  - Multi-document transactions write the RSI candidate and its verdict together.
+  - Time-series `measurements` collection for plant samples.
+  - Failure memory uses hybrid retrieval: Atlas Vector Search with automated embedding (Voyage `voyage-4`) plus Atlas
+    Search (fuzzy, autocomplete, facets), fused with `$rankFusion`.
+  - `$jsonSchema` validators, for example `harness_versions` requires `run_regression_tests: true`. Also TTL
+    lifecycle, a least-privilege web user, and window-function analytics.
+  - Live counts (queried 2026-10-11): 30 collections; 17 jobs (8 completed, 6 blocked, 2 failed, 1 running);
+    28,937 measurement samples; 20 audited job transitions; `lessons_vec` (autoEmbed, voyage-4) and
+    `lessons_search` indexes READY.
+- **Raindrop: failures become regression tests**
+  - Every agent call, tool step and subagent is traced and tagged with a `harness_version` feature flag. Crashed jobs
+    resume the same interaction (`resumeInteraction`). Failures and verdicts emit signals.
+  - The Query API reads traces back as cited evidence for the RSI meta-agent.
+  - A dashboard and a "MongoMation failing interactions" dataset (11 rows as of 2026-10-11) form the regression set.
+    Raindrop holds 201 events from the last 30 days.
+  - Raindrop Workshop evals score real jobs by harness version (`npm run raindrop:eval`). The Workshop MCP drives the
+    self-healing loop.
+- **Modelence: production app**
+  - Deployed dashboard with live queries over change streams (no polling), channels, cron jobs (rig/job watch, ops
+    digest), Stores, rate limits, roles and verified-email guards, telemetry, and `@modelence/ai` failure explanations.
+- **AWS: real rig plus a deterministic gate around the LLM**
+  - OpenPLC Runtime v4 and Factory I/O run on EC2. The worker reaches them through the team's HTTPS gateway.
+    Factory I/O is OpenPLC's Modbus client.
+  - Nothing the model writes is trusted. A hidden grader, regression tests and `rsi/gate.ts` (KEPT / ROLLED BACK)
+    decide every outcome.
+  - AWS SDK modules (S3 artifacts, CloudWatch metrics/logs/alarms, SSM health probe) and a CloudFormation template
+    (`infra/aws/`) are written and flag-gated. They are **not deployed** in this submission.
 
 ## 4. Track fit
 
@@ -79,11 +101,26 @@ numbers that were not measured; mark any replayed row "previously measured" with
 | harness v0 | TODO | TODO | TODO | TODO | TODO |
 | harness vN | TODO | TODO | TODO | TODO | TODO |
 
-RSI verdicts so far: **TODO** (from the dashboard RSI card / `npm run evolve` output).
+RSI verdicts so far (Atlas, 2026-10-11): 5 proposals, all **NO CHANGE**. Only harness v0 exists. KEPT / ROLLED BACK
+verdict for the current run: **TODO**, pending the other session's evolve run.
+
+Before/after ablation number: **TODO**. Video link: **TODO**.
 
 ## 7. Status (2026-10-11, update before submitting)
 
-- Verified: root typecheck clean, 15/15 unit tests pass, isolation check passes; Atlas, Claude and Raindrop green in
-  `npm run green`; STruC++ v4 bundles build offline from the scene's address map.
-- Rig: the scene's I/O map and polarity were checked against the rig owner's live map. **TODO:** record the first
-  end-to-end rig run (Run Example → fault → evolve → ablation) and update this section with what actually ran.
+- Verified today: `npm test` 98/98 pass (35 suites). STruC++ builds OpenPLC Runtime v4 bundles offline from the
+  scene's address map.
+- Rig: reached through the team's HTTPS gateway (not SSM port forwarding). The scene's I/O map and polarity were
+  checked against the rig owner's live map. **TODO:** record the first full rig run (Run Example → fault → evolve →
+  ablation).
+
+## 8. Honest limits
+
+- Small numbers. 17 jobs and 5 RSI proposals so far. No harness change has been KEPT yet, so the self-improvement
+  claim is a working mechanism, not a measured gain.
+- The ablation results table is still empty. We will not fill it with numbers we did not measure.
+- One scene and one rig. Results say nothing about other plants or other PLC vendors.
+- The AWS SDK modules and CloudFormation stack are written and tested but not deployed. Today the rig runs on
+  team-provided EC2 behind an HTTPS gateway.
+- Raindrop is on the free tier, so evals run locally in Raindrop Workshop rather than in hosted Evals.
+- The shared rig needs a ~60 s Modbus relink after each deploy, which limits how many runs fit in a day.

@@ -1,3 +1,5 @@
+// DEPRECATED: hosted Raindrop Evals require a paid org (403 on our free tier). Use scripts/workshop-eval.ts
+// (`npm run workshop:eval`, Raindrop Workshop). Kept only for reference: `npm run deprecated:raindrop:eval:hosted`.
 // Raindrop Evals suite for the ablation table. Rows are the frozen HELD-OUT benchmark cases (specs/benchmark.json);
 // the "agent" for each row is the measured result of one ablation condition (bare / v0 / vN) that runAblationJob
 // stored in Atlas `benchmark_runs` — nothing is re-generated or re-simulated here, so the eval reports exactly

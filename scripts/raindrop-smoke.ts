@@ -33,7 +33,8 @@ console.log(JSON.stringify({ runId, jobEvent, aiEvent, testEvent }));
 
 // Read back through the Query API (ingest is asynchronous: poll up to ~2 min).
 const q = RaindropQuery.fromEnv()!;
-const want = [jobEvent, aiEvent, testEvent].filter(Boolean) as string[];
+// testEvent === jobEvent unless RAINDROP_CLOUD_PER_TEST=1 (per-test cloud events are off by default).
+const want = [...new Set([jobEvent, aiEvent, testEvent].filter(Boolean) as string[])];
 const found = new Map<string, unknown>();
 for (let i = 0; i < 24 && found.size < want.length; i++) {
   await sleep(5000);
