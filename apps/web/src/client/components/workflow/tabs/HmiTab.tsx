@@ -3,10 +3,12 @@
 // Every value is a real rig tag from Atlas. The fault button creates a REAL paid job, so it sits behind a confirm.
 import * as React from 'react';
 import { createPortal } from 'react-dom';
+import { useQuery } from '@tanstack/react-query';
+import { callMethod } from 'modelence/client';
 import { useJobMutation } from '@/client/lib/api';
 import {
   RIG_FRESH_MS, faultPreconditionFailures,
-  type DashboardData, type JobCreated, type ProjectData, type RigLite, type RsiData, type SceneLite,
+  type DashboardData, type Envelope, type JobCreated, type ProjectData, type RigLite, type RsiData, type SceneLite, type TagValue,
 } from '@/shared/mongomation';
 import { HMI_PARTS, type RunView } from '@/client/plcflow/model';
 import { createFactory, type FactoryApi } from '@/client/plc3d/factory3d.js';
@@ -21,7 +23,28 @@ let factoryCache: { key: string; api: Reusable } | null = null;
 /** Rig & faults drawer open state; module-level so switching tabs doesn't reset it. Closed by default. */
 let drawerOpenCache = false;
 
-function Machine({ rig, sceneKey }: { rig: RigLite | null; sceneKey: string }) {
+/* While a sim run samples, the worker's rig monitor pauses its own reads (worker harness/sampling.ts), so rig_status.tags freeze
+   for the whole test phase. During that window the twin is fed from the newest row the test sampler wrote to `measurements`
+   (server/mongomation/simlive.ts). Only real sampled values: no row newer than SAMPLE_FRESH_MS -> back to rig_status. */
+const SAMPLE_FRESH_MS = 5000;
+type SimLive = { live: boolean; simRunId?: string; ts?: Date; ageMs?: number; values?: Record<string, TagValue> };
+type Sample = { values: Record<string, TagValue>; ageMs: number };
+function useTestSample(projectId: string | undefined, testing: boolean): Sample | null {
+  const q = useQuery({
+    queryKey: ['mongomation.simLive', projectId],
+    queryFn: () => callMethod<Envelope<SimLive>>('mongomation.simLive', { projectId: projectId ?? '' }, { errorHandler: () => undefined }),
+    enabled: !!projectId && testing,
+    refetchInterval: 400,
+    refetchIntervalInBackground: false,
+    retry: false,
+  });
+  const d = q.data;
+  if (!testing || !d || !d.connected || !d.live || !d.values || d.ageMs == null) return null;
+  const ageMs = d.ageMs + (d.cacheAgeMs ?? 0) + Math.max(0, Date.now() - q.dataUpdatedAt);
+  return ageMs < SAMPLE_FRESH_MS ? { values: d.values, ageMs } : null;
+}
+
+function Machine({ rig, sceneKey, sample }: { rig: RigLite | null; sceneKey: string; sample: Sample | null }) {
   const host = React.useRef<HTMLDivElement>(null);
   const f = React.useRef<Reusable | null>(null);
   React.useEffect(() => {
@@ -42,12 +65,18 @@ function Machine({ rig, sceneKey }: { rig: RigLite | null; sceneKey: string }) {
   }, [sceneKey]);
   React.useEffect(() => {
     if (!f.current || !rig) return;
+    if (sample) {
+      // Test in progress: the sampled tags are newer than rig_status; the rest keep their last real rig_status value.
+      const t = { ...rig.tags, ...sample.values };
+      f.current.setIO({ tags: t, running: !!t['Start light'], fault: !!t['Reset light'], forced: rig.forced.filter((n) => n in t), online: true, ageMs: sample.ageMs });
+      return;
+    }
     const t = rig.tags;
     // online/ageMs let the twin go idle (and clear its boxes) when the rig is stale or OpenPLC is unreachable.
     const ageMs = rig.ageMs ?? (rig.checkedAt ? Date.now() - new Date(rig.checkedAt).getTime() : Infinity);
     const snap = { tags: t, running: !!t['Start light'], fault: !!t['Reset light'], forced: rig.forced.filter((n) => n in t), online: ageMs < RIG_FRESH_MS && !!rig.openplc?.reachable, ageMs };
     f.current.setIO(snap);
-  }, [rig, sceneKey]);
+  }, [rig, sceneKey, sample]);
   return <div className="f3d" ref={host} />;
 }
 
@@ -87,6 +116,10 @@ export default function HmiTab({ run, p, dash, scene, signedIn, rsi = null }: { 
   const tabRoot = React.useRef<HTMLDivElement>(null);
   const [portalHost, setPortalHost] = React.useState<HTMLElement | null>(null);
   React.useEffect(() => { setPortalHost(tabRoot.current?.closest<HTMLElement>('.mmw') ?? document.body); }, []);
+  const projectId = p?.project?.id;
+  const aj = dash?.activeJob;
+  const testing = p?.simRun?.status === 'running' || (!!aj && !!projectId && aj.projectId === projectId && ['running', 'verifying'].includes(aj.status));
+  const sample = useTestSample(projectId, testing);
   const faultSelEl = React.useRef<HTMLSelectElement>(null);
   const focusFault = React.useRef(false);
   React.useEffect(() => {
@@ -103,7 +136,7 @@ export default function HmiTab({ run, p, dash, scene, signedIn, rsi = null }: { 
   if (!p || !run.deployed) return <div className="hmi-tab" ref={tabRoot}><div className="empty"><b>HMI not generated yet</b>It's built from the I/O map once the program is deployed.</div>{loop}</div>;
   const rig = dash?.rig ?? null;
   const rigFresh = rig?.ageMs != null && rig.ageMs < RIG_FRESH_MS;
-  const t = rig?.tags ?? {};
+  const t = sample ? { ...(rig?.tags ?? {}), ...sample.values } : rig?.tags ?? {};
   const faults = scene?.faults ?? [];
   const fails = faultPreconditionFailures({
     project: p.project ? { id: p.project.id, sceneId: p.project.sceneId, finalPlcVersionId: p.project.finalPlcVersionId } : null,
@@ -120,19 +153,20 @@ export default function HmiTab({ run, p, dash, scene, signedIn, rsi = null }: { 
   };
   const forced = rig?.forced ?? [];
   const alarm = !rigFresh ? `Rig offline · last seen ${rig?.checkedAt ? t8(rig.checkedAt) : 'never'}` : t['Reset light'] ? 'ALARM · fault lamp on' : forced.length ? `${forced.join(', ')} forced` : 'No active alarms';
-  const hint = !rigFresh ? <><b className="off">OFFLINE</b><span>The machine shows the last known tag values from Atlas.</span></>
+  const hint = sample ? <><b className="ok">LIVE · TEST IN PROGRESS</b><span>Sampled from the test run: the machine shows the tag values the test harness is reading right now ({Math.round(sample.ageMs)} ms old).</span></>
+    : !rigFresh ? <><b className="off">OFFLINE</b><span>The machine shows the last known tag values from Atlas.</span></>
     : forced.length ? <><b>FORCED</b><span>{forced.join(', ')} {forced.length > 1 ? 'are' : 'is'} forced on the rig. Watch the program react.</span></>
       : <><b className="ok">LIVE</b><span>The machine and panel show the real Factory I/O tag values streamed from Atlas.</span></>;
   const station = (scene?.title ?? p.project?.sceneId ?? 'Station').toUpperCase();
   const rigOk = rigFresh && !!rig?.factoryio?.reachable;
   return (<div className="hmi-tab" ref={tabRoot}>
-    <div className="card"><div className="ch"><h2>Operator HMI</h2><span className="sub">generated from the I/O map · bound to live PLC tags</span><span className="r">{rigFresh ? <span className="pill go"><i />live</span> : <span className="pill stop"><i />rig offline</span>}
+    <div className="card"><div className="ch"><h2>Operator HMI</h2><span className="sub">generated from the I/O map · bound to live PLC tags</span><span className="r">{sample ? <span className="pill go" title="rig_status pauses while tests sample the rig; these values come from the running test's measurements"><i />LIVE · test in progress · sampled from the test run</span> : rigFresh ? <span className="pill go"><i />live</span> : <span className="pill stop"><i />rig offline</span>}
       <button type="button" className={`hmi-dtog ${rigOk ? 'ok' : 'bad'}`} aria-expanded={drawer} aria-controls="hmi-drawer" onClick={() => setDrawer(!drawer)} title="Live simulator status and fault injection"><i />Rig &amp; faults <span aria-hidden="true">▸</span></button>
       <button type="button" className="hmi-dfault" aria-label="Inject fault…" title="Inject fault…" onClick={() => { focusFault.current = true; setDrawer(true); }}><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M9 1 3 9h4l-1 6 6-8H8l1-6z" fill="currentColor" /></svg></button></span></div>
       <div className="cb">
         <div className="hmi"><div className="hmi-bar"><span className="hmi-title" title={station}>{station}</span><span className="hmi-screen">screen 1/1</span>
           <span className={`alarm ${rigFresh && t['Reset light'] ? 'al-on' : rigFresh && forced.length ? 'al-forced' : ''}`} title={alarm} role="status"><span className="alarm-t">{alarm}</span></span></div>
-          <div className="hmi-body"><Machine rig={rig} sceneKey={scene?.id ?? p.project?.sceneId ?? 'station'} /><div className="hmi-side"><OperatorPanel tags={t} /></div></div></div>
+          <div className="hmi-body"><Machine rig={rig} sample={sample} sceneKey={scene?.id ?? p.project?.sceneId ?? 'station'} /><div className="hmi-side"><OperatorPanel tags={t} /></div></div></div>
         <p className="hmi-hint">{hint}</p></div></div>
     {portalHost ? createPortal(<>
     <div className={`hmi-scrim ${drawer ? 'open' : ''}`} onClick={() => setDrawer(false)} aria-hidden="true" />

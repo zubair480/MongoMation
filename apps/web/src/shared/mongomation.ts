@@ -352,6 +352,24 @@ export interface ProjectData {
   verdictSource: { kind: 'sim_run' | 'project'; simRunId?: string; latestRun?: boolean } | null;
   faults: FaultInjectionLite[];
   diagnosis: DiagnosisLite | null;
+  /** Lessons for the Log tab: this project's (diagnoses + lessons-collection entries citing it), then recent global ones. */
+  lessons?: { project: LessonLite[]; global: LessonLite[] };
+}
+
+/** One lesson as shown in the Log tab. Hidden test ids are scrubbed from all text. */
+export interface LessonLite {
+  id: string;
+  pattern?: string;
+  fix?: string;
+  /** diagnosis = from a diagnosis of this run; repair = that diagnosis drove a repair; critic/lesson-writer = lessons collection. */
+  source: 'diagnosis' | 'repair' | 'critic' | 'lesson-writer';
+  /** Requirements the originating diagnosis covered (failing requirement ids). */
+  requirementIds: string[];
+  createdAt?: Date;
+  status?: string;
+  category?: string;
+  verified?: boolean;
+  projectId?: string;
 }
 
 export interface PlcSourceData {

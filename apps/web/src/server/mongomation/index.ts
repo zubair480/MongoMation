@@ -59,6 +59,7 @@ const mongomationModule = new Module('mongomation', {
     // $graphLookup harness lineage + $unionWith project evidence timeline (lineage.ts).
     harnessLineage,
     evidenceTimeline,
+    simLive: (a: unknown) => import('./simlive').then((m) => m.simLive(a)), // HMI twin during tests (simlive.ts)
   },
 
   // Signed-in, verified users only (guards.ts), rate limited. Job mutations insert one document into `jobs`.

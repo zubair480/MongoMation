@@ -33,6 +33,8 @@ import {
   toAssertion,
   toCompile,
   toDiagnosis,
+  lessonsFromDiagnosis,
+  toLessonDoc,
   toEvent,
   toFaultInjection,
   toHarnessDetail,
@@ -270,6 +272,38 @@ export async function project(args: unknown) {
         ]);
       const hiddenIds = strArr(hiddenIdValues);
 
+      // Lessons (Log tab): every diagnosis of this project (diagnoses[].lessons), lessons-collection entries
+      // citing this project, then recent live global lessons.
+      const pidF = idFilter(pid);
+      const [diagLessonDocs, repairedDiagIds, projLessonDocs, globalLessonDocs] = await Promise.all([
+        db
+          .collection('diagnoses')
+          .find({ projectId: pidF }, { projection: { lessons: 1, 'causes.requirementId': 1, createdAt: 1, projectId: 1 } })
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .toArray(),
+        db.collection('repairs').distinct('diagnosisId', { projectId: pidF }),
+        db
+          .collection('lessons')
+          .find({ $or: [{ 'sources.projectId': pidF }, { 'lastSource.projectId': pidF }, { 'evidence.projectId': pidF }] } as Document)
+          .sort({ createdAt: -1 })
+          .limit(20)
+          .toArray(),
+        db
+          .collection('lessons')
+          .find({ status: { $ne: 'superseded' }, active: { $ne: false }, mergedInto: { $exists: false } })
+          .sort({ createdAt: -1 })
+          .limit(12)
+          .toArray(),
+      ]);
+      const repaired = new Set(strArr(repairedDiagIds));
+      const projectLessons = [
+        ...diagLessonDocs.flatMap((d) => lessonsFromDiagnosis(d, repaired.has(idOf(d._id)), hiddenIds)),
+        ...projLessonDocs.map((d) => toLessonDoc(d, hiddenIds)),
+      ].sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+      const projLessonIds = new Set(projLessonDocs.map((d) => idOf(d._id)));
+      const globalLessons = globalLessonDocs.filter((d) => !projLessonIds.has(idOf(d._id))).map((d) => toLessonDoc(d, hiddenIds));
+
       const plcVersions = versionDocs.map(toPlcVersionMeta);
       const latest = plcVersions[0];
       const simRun = simRunDoc ? toSimRun(simRunDoc) : null;
@@ -349,6 +383,7 @@ export async function project(args: unknown) {
         verdictSource,
         faults: faultDocs.map(toFaultInjection),
         diagnosis: diagnosisDoc ? toDiagnosis(diagnosisDoc) : null,
+        lessons: { project: projectLessons, global: globalLessons },
       };
     }),
   );
