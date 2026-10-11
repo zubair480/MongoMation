@@ -263,8 +263,10 @@ export function createFactory(host, opts = {}) {
   }
 
   // ---------- IO state ----------
-  let io = { tags: {}, boxes: [], running: true, fault: false };
-  let localSim = true, simT = 0, nid = 1;
+  // Idle until real data arrives: no boxes, no tags. setIO() (rig tags) is the only driver unless
+  // opts.localSim is explicitly true (standalone demo), which runs a random local box simulation.
+  let io = { tags: {}, boxes: [], running: false, fault: false };
+  let localSim = opts.localSim === true, simT = 0, nid = 1, idleApplied = false;
   const localBoxes = [];
   function stepLocal(dt) { // used only when index.html isn't feeding setIO (scene-demo)
     simT += dt;
@@ -383,7 +385,7 @@ export function createFactory(host, opts = {}) {
     if (hidden || paused) { raf = 0; return; } // fully stop the loop while the tab is hidden; restarted by onVis
     raf = requestAnimationFrame(frame);
     const dt = Math.min(0.05, clock.getDelta());
-    if (localSim) { stepLocal(dt); applyIO(); }
+    if (localSim) { stepLocal(dt); applyIO(); } else if (!idleApplied) { idleApplied = true; applyIO(); }
     // reveal
     revealT += dt;
     const gk = Math.min(1, revealT / 1.0); gridMinor.material.opacity = 0.9 * gk; gridMajor.material.opacity = gk;
@@ -455,7 +457,7 @@ export function createFactory(host, opts = {}) {
   const api = {
     setShot(name) { if (name !== shot) { shot = name; shotT = 0; focus = null; } },
     focusTag(name) { focus = tagObj[name] ? name : null; },
-    setIO(snap) { localSim = false; io = snap; applyIO(); },
+    setIO(snap) { localSim = false; idleApplied = true; io = snap; applyIO(); },
     setLabels(mode) { labelMode = mode; },
     // HMI build: 0..5 parts (process, sensors, actuators, panel, alarms) rise into place as they are bound
     setBuild(n) {

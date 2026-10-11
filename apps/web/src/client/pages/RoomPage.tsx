@@ -8,11 +8,14 @@ import { WORKER_STALE_MS, RIG_FRESH_MS } from '@/shared/mongomation';
 import { createRoom, type CabinetDef, type RoomApi } from '@/client/plc3d/plcroom.js';
 import './room.css';
 
+type LiveState = { connected: boolean; openplcReachable: boolean; openplcRunning: boolean; version: number | null; sceneId: string | null };
+// plcroom.d.ts predates setLive/defs; extend locally.
+type LiveRoomApi = RoomApi & { setLive?: (s: LiveState) => void; defs?: CabinetDef[] };
 type Tip = { x: number; y: number; head: string; text: string; sub: string };
 
 export default function RoomPage() {
   const host = React.useRef<HTMLDivElement>(null);
-  const room = React.useRef<RoomApi | null>(null);
+  const room = React.useRef<LiveRoomApi | null>(null);
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [sel, setSel] = React.useState<CabinetDef | null>(null);
@@ -27,6 +30,20 @@ export default function RoomPage() {
   const dash = dashQ.data && dashQ.data.connected ? dashQ.data : null;
   const workerAlive = !!dash?.workers.some((w) => (w.heartbeatAgeMs ?? Infinity) < WORKER_STALE_MS);
   const rigFresh = (dash?.rig?.ageMs ?? Infinity) < RIG_FRESH_MS;
+  // CAB-01 is the only cabinet wired to the real rig: drive it from rig_status + the active project.
+  const rig = dash?.rig ?? null;
+  const proj = dash ? (dash.projects.find((p) => p.id === dash.checkpointProjectId) ?? dash.projects.find((p) => !!rig?.sceneId && p.sceneId === rig.sceneId)) : undefined;
+  const live: LiveState = {
+    connected: !!rig && rigFresh,
+    openplcReachable: !!rig?.openplc?.reachable,
+    openplcRunning: !!rig?.openplc?.running,
+    version: proj?.currentVersion ?? null,
+    sceneId: rig?.sceneId ?? null,
+  };
+  const liveKey = JSON.stringify(live);
+  const [cabCount, setCabCount] = React.useState(0);
+  const liveCount = live.connected ? 1 : 0;
+  React.useEffect(() => { room.current?.setLive?.(JSON.parse(liveKey) as LiveState); }, [liveKey]);
 
   React.useEffect(() => {
     if (!host.current) return;
@@ -35,7 +52,7 @@ export default function RoomPage() {
     let stageT = 0;
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    const r = createRoom(host.current, {
+    const r: LiveRoomApi = createRoom(host.current, {
       onStage: (s) => {
         window.clearTimeout(stageT);
         if (!s) { setStage(null); return; }
@@ -47,14 +64,17 @@ export default function RoomPage() {
       onOpenPLC: (def) => {
         setOpened(def);
         const url = `/plc/${encodeURIComponent(def.id)}${def.ex ? `?ex=${encodeURIComponent(def.ex)}` : ''}`;
-        later(() => { setLeaving(true); later(() => navigate(url), reduce ? 0 : 650); }, reduce ? 0 : 250);
+        // Rewrite the current entry to /?cab=<id> first, so browser Back from the PLC page lands on this cabinet again.
+        later(() => { setLeaving(true); later(() => { navigate(`/?cab=${encodeURIComponent(def.id)}`, { replace: true }); navigate(url); }, reduce ? 0 : 650); }, reduce ? 0 : 250);
       },
       onClosePLC: () => { setLeaving(false); setOpened(null); },
       onHover: (h) => setTip(!h ? null : h.selected && h.part === 'plc'
         ? { x: h.x, y: h.y, head: 'PLC MM-1214', text: ' · click to open', sub: h.def.plc }
-        : { x: h.x, y: h.y, head: h.def.id, text: ` ${h.def.machine}`, sub: `${h.def.state} · ${h.def.plc}` }),
+        : { x: h.x, y: h.y, head: h.def.id, text: ` ${h.def.machine}`, sub: h.def.state === 'not connected' ? 'not connected' : `${h.def.state} · ${h.def.plc}` }),
     });
     room.current = r;
+    setCabCount(r.defs?.length ?? 0);
+    r.setLive?.(JSON.parse(liveKey) as LiveState);
 
     // Back from /plc/:cab (← Control room → /?cab=CAB-01): land on that cabinet again.
     const cab = params.get('cab');
@@ -97,7 +117,7 @@ export default function RoomPage() {
       </header>
       <div id="stage" className={`${stage ? 'on' : ''}${sel ? ' low' : ''}`}>{stageText}</div>
       <section id="intro" className={sel ? 'away' : ''}>
-        <div className="k">CONTROL ROOM · 10 CABINETS · 2 LIVE</div>
+        <div className="k">CONTROL ROOM · {cabCount} CABINETS · {liveCount} LIVE</div>
         <h1>Pick a cabinet.</h1>
         <p>Every cabinet holds a PLC. Open one to describe its machine, generate code, run it on the rig and watch it improve.</p>
         <button className="btn" onClick={() => room.current?.selectCabinet('CAB-01')}>Open CAB-01 · Sorting station <span>→</span></button>
@@ -106,7 +126,7 @@ export default function RoomPage() {
         <div className="k">{sel ? `${sel.id} · PLC CABINET` : ''}</div>
         <h2>{sel?.machine}</h2>
         <dl>
-          <dt>State</dt><dd><span className={`dot ${sel?.state ?? ''}`} style={{ display: 'inline-block', marginRight: 6 }} />{sel?.state}</dd>
+          <dt>State</dt><dd><span className={`dot ${(sel?.state ?? '').replace(/ /g, '-')}`} style={{ display: 'inline-block', marginRight: 6 }} />{sel?.state}</dd>
           <dt>PLC</dt><dd>{sel?.plc}</dd>
           <dt>Scene</dt><dd>{sel?.scene}</dd>
         </dl>

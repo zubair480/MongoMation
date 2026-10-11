@@ -79,7 +79,8 @@ export function deriveRun(p: ProjectData | null): RunView {
 
   const tc = p?.testCounts;
   if (tc?.total && !sub[3].startsWith('repair')) sub[3] = `${tc.passed} / ${tc.total}`;
-  if (tc?.failed && status[3] === 'done') status[3] = 'warn'; // failures on the newest sim run, no repair running
+  // Failed or blocked tests on the newest sim run (no repair running): the Test step is not a clean pass.
+  if ((tc?.failed || tc?.blocked) && status[3] === 'done') status[3] = 'warn';
 
   const ps = p?.project?.status;
   const finished = !!ps && FINAL_PROJECT.includes(ps);

@@ -30,21 +30,21 @@ function Machine({ rig }: { rig: RigLite | null }) {
 /* Ali's OPERATOR panel (START / STOP / RESET / E-STOP, lamps, COUNT), drawn from the live tags. Operator writes are not
    exposed by the app, so the buttons show the live state of their PLC inputs and stay inert. */
 function OperatorPanel({ tags }: { tags: Record<string, boolean | number> }) {
-  const lamp = (on: boolean, c: string) => (on ? c : '#c4c8cc');
+  const lamp = (on: boolean, c: string) => (on ? c : '#CFCCC4');
   const pressed = (n: string) => (tags[n] ? { stroke: '#1b2127', strokeWidth: 2 } : {});
   const cnt = typeof tags.Counter === 'number' ? String(tags.Counter).padStart(4, '0') : '—';
   return (<svg viewBox="0 0 172 250" style={{ width: 172, flex: 'none', alignSelf: 'flex-start', margin: 10 }} aria-label="Operator panel">
     <g style={{ cursor: 'not-allowed' }}><title>Operator writes go through Factory I/O and are not exposed by the app</title>
-      <rect x="0.5" y="0.5" width="171" height="249" rx="8" fill="#f2f1ed" stroke="#a9aeb3" />
-      <text x="15" y="22" fill="#46505a" fontFamily="var(--display)" fontWeight="600" fontSize="11" letterSpacing="2">OPERATOR</text>
-      <rect x="15" y="36" width="68" height="36" rx="5" fill="#13804a" {...pressed('Start')} /><text x="49" y="59" fill="#fff" fontWeight="700" fontSize="12" textAnchor="middle">START</text>
-      <rect x="91" y="36" width="68" height="36" rx="5" fill="#c0322b" /><text x="125" y="59" fill="#fff" fontWeight="700" fontSize="12" textAnchor="middle">STOP</text>
-      <rect x="15" y="82" width="68" height="36" rx="5" fill="#f2b01e" {...pressed('Reset')} /><text x="49" y="105" fill="#1b2127" fontWeight="700" fontSize="12" textAnchor="middle">RESET</text>
-      <circle cx="125" cy="100" r="22" fill="#c0322b" stroke="#f2b01e" strokeWidth="4" /><text x="125" y="104" fill="#fff" fontWeight="700" fontSize="9" textAnchor="middle">E-STOP</text>
+      <rect x="0.5" y="0.5" width="171" height="249" rx="8" fill="#F6F5F1" stroke="#B9B5AA" />
+      <text x="15" y="22" fill="#46505a" fontFamily="var(--display)" fontWeight="800" fontSize="11" letterSpacing="2" style={{ fontStretch: '125%' }}>OPERATOR</text>
+      <rect x="15" y="36" width="68" height="36" rx="3" fill="#15171A" {...pressed('Start')} /><text x="49" y="59" fill="#fff" fontWeight="700" fontSize="12" textAnchor="middle">START</text>
+      <rect x="91" y="36" width="68" height="36" rx="3" fill="#D7261E" /><text x="125" y="59" fill="#fff" fontWeight="700" fontSize="12" textAnchor="middle">STOP</text>
+      <rect x="15" y="82" width="68" height="36" rx="3" fill="#E8A317" {...pressed('Reset')} /><text x="49" y="105" fill="#1b2127" fontWeight="700" fontSize="12" textAnchor="middle">RESET</text>
+      <circle cx="125" cy="100" r="22" fill="#D7261E" stroke="#E8A317" strokeWidth="4" /><text x="125" y="104" fill="#fff" fontWeight="700" fontSize="9" textAnchor="middle">E-STOP</text>
       <g fontFamily="var(--mono)" fontSize="9.5" fill="#46505a">
-        <circle cx="28" cy="146" r="7" fill={lamp(!!tags['Start light'], '#13804a')} /><text x="41" y="149">RUNNING</text>
-        <circle cx="28" cy="168" r="7" fill={lamp(!!tags['Reset light'], '#f2b01e')} /><text x="41" y="171">FAULT / RESET</text>
-        <circle cx="28" cy="190" r="7" fill={lamp(!!tags['Stop light'], '#c0322b')} /><text x="41" y="193">STOPPED</text>
+        <circle cx="28" cy="146" r="7" fill={lamp(!!tags['Start light'], '#FF5A1F')} /><text x="41" y="149">RUNNING</text>
+        <circle cx="28" cy="168" r="7" fill={lamp(!!tags['Reset light'], '#E8A317')} /><text x="41" y="171">FAULT / RESET</text>
+        <circle cx="28" cy="190" r="7" fill={lamp(!!tags['Stop light'], '#D7261E')} /><text x="41" y="193">STOPPED</text>
       </g>
       <rect x="15" y="208" width="142" height="30" rx="4" fill="#fff" stroke="#a9aeb3" />
       <text x="25" y="227" fill="#67717b" fontFamily="var(--mono)" fontSize="9">COUNT</text>

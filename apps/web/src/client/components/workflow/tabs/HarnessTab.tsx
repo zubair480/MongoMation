@@ -46,7 +46,7 @@ export default function HarnessTab({ run, rsi, abl, p }: { run: RunView; rsi: Rs
       <div className="card"><div className="ch"><h3>Does the harness help?</h3><span className="r sub">held-out cases · same model · same grader</span></div><div className="cb">
         {conds.length ? <>
           <div className="bars">{conds.map((c, i) => { const v = c.scores?.requirement_satisfaction;
-            return <div key={c.key} className="brow"><div className="top"><span>{condLabel(c.key)}</span><b>{pct(v)}</b></div><div className="btrack"><i style={{ width: `${Math.round((v ?? 0) * 100)}%`, background: i === conds.length - 1 ? 'var(--me)' : i ? '#7d97b5' : '#a9aeb3' }} /></div></div>; })}</div>
+            return <div key={c.key} className="brow"><div className="top"><span>{condLabel(c.key)}</span><b>{pct(v)}</b></div><div className="btrack"><i style={{ width: `${Math.round((v ?? 0) * 100)}%`, background: i === conds.length - 1 ? 'var(--sig)' : i ? 'var(--graphite)' : 'var(--line3)' }} /></div></div>; })}</div>
           <p className="lbl" style={{ marginTop: 22 }}>Also measured</p>
           <table><tbody>
             <tr><td>Compiles first try</td><td className="m">{conds.map((c) => pct(c.scores?.compile_first_try)).join(' → ')}</td></tr>
