@@ -14,11 +14,18 @@ export const ROLE_GUIDE = `Requirement kinds and the role keys each one uses (us
 - sensor_actuator: sensor, actuator   params: delayMs?, actuatorValue? (true|false)
 - interlock: actuator, blocker, optional start, stop   (actuator must be off while blocker is active, e.g. downstream full/jammed)
 - timer_timeout: sensor, actuator, optional fault_indicator, start, stop   params: timeoutMs   (sensor stuck too long = jam/fault)
-- fault_latch: cause, fault_indicator, reset, optional start, actuator   params: timeoutMs?
-- reset_precondition: cause, fault_indicator, reset   params: timeoutMs?
-- no_auto_restart: start, actuator, reset, cause   params: timeoutMs?
+- fault_latch: cause, fault_indicator, reset, optional start, actuator, cause_clear   params: timeoutMs?
+- reset_precondition: cause, fault_indicator, reset, optional cause_clear   params: timeoutMs?
+- no_auto_restart: start, actuator, reset, cause, optional cause_clear   params: timeoutMs?
+  (cause = the input whose ON state raises the fault; cause_clear = an input that must be OFF at the same time, e.g. a
+  plausibility fault "High sensor ON while Low sensor OFF" -> cause: high sensor, cause_clear: low sensor)
 - estop: estop, actuator, optional start
-- indicator: start, stop, indicator
+- indicator: params: when ("running" | "fault"; default "running")
+    when=running: start, stop, indicator   (a run/status lamp that is ON while the line runs)
+    when=fault: fault_indicator, cause, optional reset, start, actuator, cause_clear   params: timeoutMs?   (a fault/alarm lamp
+    that is ON while a fault is active and OFF after a valid reset, e.g. "light the Reset light as a fault lamp")
+  A lamp that shows a FAULT is never when=running; give it the role fault_indicator, the SAME lamp, cause and reset (and
+  cause_clear) as the fault_latch / reset_precondition requirements for that fault.
 - counter: sensor, actuator, optional start   params: count
 - sorting: classifier, diverter, optional sensor, start, stop   params: delayMs?, classifierValue? (true|false)   (sensor = part-presence sensor that sees every part, e.g. low sensor; classifierValue false = parts the classifier does NOT detect, e.g. short boxes when the classifier is the high sensor)
 - sequence, mode, other: describe roles freely (these may not be automatically testable)

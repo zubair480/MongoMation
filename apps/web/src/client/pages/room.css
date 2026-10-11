@@ -33,6 +33,7 @@
 .mmroom .cab-tag.hidden{opacity:0}
 .mmroom .dot{width:6px;height:6px;border-radius:50%;background:#C9CDD3}
 .mmroom .dot.running{background:var(--ink)}
+.mmroom .dot.stopped{background:#E0A21B}
 .mmroom .dot.fault{background:#D7261E;animation:breathe 1s infinite}
 .mmroom .plc-tag{display:flex;flex-direction:column;gap:3px;padding:8px 11px;background:#fff;border:1px solid var(--ink);border-radius:4px;font:500 11px "Geist Mono",monospace;white-space:nowrap;transform:translateY(-10px);animation:pop .35s var(--ease)}
 .mmroom .plc-tag b{font-weight:600}

@@ -1,5 +1,5 @@
 // Enqueues the same job the dashboard's "Run Example" button does, then follows its events until it ends.
-//   npm run example -- [--example sorting|two-conveyors]
+//   npm run example -- [--example sorting|two-conveyors] [--memory | --no-memory] [--recall | --no-recall]
 import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { client, col, connect } from "../apps/worker/src/db/index.ts";
@@ -21,7 +21,15 @@ if (!scene?.verified) {
   process.exit(2);
 }
 console.log(`spec (${ex.id}):\n${ex.text}\n`);
-const jobId = await enqueue({ type: "engineer", specText: ex.text, sceneId: ex.sceneId, origin: "example" });
+// --memory / --no-memory: Verified Program Memory for codegen (job option; omitted -> worker MEMORY_PROGRAMS env).
+const memory = process.argv.includes("--memory") ? true : process.argv.includes("--no-memory") ? false : undefined;
+// --recall / --no-recall (aliases --fastpath / --no-fastpath): experience recall (job option; omitted -> on whenever
+// program memory is on, so --no-memory alone gives a fully cold run). RECALL_TRUST=1 on the WORKER enables trusted reuse.
+const has = (...f: string[]) => f.some((x) => process.argv.includes(x));
+const recall = has("--recall", "--fastpath") ? true : has("--no-recall", "--no-fastpath") ? false : undefined;
+const jobId = await enqueue({ type: "engineer", specText: ex.text, sceneId: ex.sceneId, origin: "example" }, { ...(memory !== undefined && { memory }), ...(recall !== undefined && { recall }) });
+if (memory !== undefined) console.log(`program memory: ${memory ? "WARM (verified reference programs on)" : "COLD (off)"}`);
+if (recall !== undefined) console.log(`experience recall: ${recall ? "ON (reuse rig-verified programs with identical requirements)" : "OFF"}`);
 console.log(`job ${jobId} queued — the worker on AWS picks it up`);
 let seen = new Date(0);
 for (;;) {

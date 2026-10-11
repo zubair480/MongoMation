@@ -42,6 +42,33 @@ export interface BeginRunArgs {
   resumeEventId?: string | null;
 }
 
+/** A Raindrop signal. `type` maps to Raindrop signal types: "feedback" (a verdict on an event; `comment` holds the
+ *  critique), "edit" (the output was corrected; `after` holds the corrected output), "agent" (agent-reported). */
+export interface SignalArgs {
+  runId: string;
+  name: string;
+  eventId?: string | null;
+  properties?: Record<string, unknown>;
+  type?: "default" | "feedback" | "edit" | "agent";
+  sentiment?: "POSITIVE" | "NEGATIVE";
+  comment?: string;
+  after?: string;
+}
+
+/** An agent reporting its own uncertainty / known gap (Raindrop Self Diagnostics). Categories we use:
+ *  capability_gap (binder: requirement cannot be realized on the scene), root_cause (critic: what broke and the
+ *  intended fix), refusal (model declined). */
+export interface SelfDiagnosisArgs {
+  runId: string;
+  eventId?: string | null;
+  category: string;
+  /** Which agent reported it (binder, critic, ...). */
+  source: string;
+  description: string;
+  sentiment?: "POSITIVE" | "NEGATIVE";
+  properties?: Record<string, unknown>;
+}
+
 export interface Telemetry {
   readonly enabled: boolean;
   /** One Raindrop interaction per engineering job; tool calls become its spans. Returns its event id. */
@@ -52,7 +79,9 @@ export interface Telemetry {
    *  A call about one test (input.testId) gets its OWN Raindrop event, so the returned id is per test. */
   tool(args: { name: string; runId: string; input: Record<string, unknown> }, result: ToolSpanResult): string | null;
   /** Named signals the RSI loop and Raindrop dashboards group on: simulator_test_failed, plc_compile_failed, ... */
-  signal(args: { runId: string; name: string; eventId?: string | null; properties?: Record<string, unknown> }): void;
+  signal(args: SignalArgs): void;
+  /** Agent-reported uncertainty / known gaps -> Raindrop Self Diagnostics. Defaults to the job event. */
+  selfDiagnose(args: SelfDiagnosisArgs): void;
   /** Artifacts on the job interaction: generated ST program, compile log, program diff. */
   attach(runId: string, attachments: RunAttachment[]): void;
   /** Run `fn` inside a real span on the job trace: every span, tool call and sub-agent dispatch it emits nests under it. */
@@ -86,6 +115,7 @@ class DisabledTelemetry implements Telemetry {
     return null;
   }
   signal() {}
+  selfDiagnose() {}
   attach() {}
   span<T>(_runId: string, _name: string, fn: () => Promise<T>) {
     return fn();
@@ -139,6 +169,7 @@ export const telemetry: Telemetry = {
     return id;
   },
   signal: (a) => impl.signal(a),
+  selfDiagnose: (a) => impl.selfDiagnose(a),
   attach: (r, a) => impl.attach(r, a),
   span: (r, n, fn) => impl.span(r, n, fn),
   flush: () => impl.flush(),

@@ -18,6 +18,12 @@
       "title": "Height sorting with stuck-sensor plausibility fault",
       "sceneId": "sorting-by-height-basic",
       "text": "Automate the sorting station: Start/Stop buttons run the line (Stop always wins, Emergency stop stops everything). Send tall boxes (high sensor) to the right lane and short boxes to the left lane using the chain transfer. Sensor plausibility: a tall box always also covers the low sensor, so if the High sensor is ON while the Low sensor is OFF for more than 1 second, treat the High sensor as stuck: flag a fault, stop all transport (entry conveyor, chain transfer, left and right conveyors) and light the Reset light as a fault lamp. The fault stays latched; Reset clears it only once the sensors are plausible again, and the line must not restart until Start is pressed again."
+    },
+    {
+      "id": "sorting-plausibility-v2",
+      "title": "Height sorting with stuck-sensor plausibility fault (2 s window, Stop light fault lamp)",
+      "sceneId": "sorting-by-height-basic",
+      "text": "Automate the sorting station: Start/Stop buttons run the line (Stop always wins, Emergency stop stops everything). Send tall boxes (high sensor) to the right lane and short boxes to the left lane using the chain transfer. Sensor plausibility: a tall box always also covers the low sensor, so if the High sensor is ON while the Low sensor is OFF for more than 2 seconds, treat the High sensor as stuck: flag a fault, stop all transport (entry conveyor, chain transfer, left and right conveyors) and light the Stop light as a fault lamp. The fault stays latched; Reset clears it only once the sensors are plausible again, and the line must not restart until Start is pressed again."
     }
   ]
 }

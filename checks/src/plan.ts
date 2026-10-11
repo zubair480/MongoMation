@@ -55,6 +55,24 @@ export function knownStatePreamble(requirements: BoundRequirement[], scene: Scen
   return presses.length ? [...presses, { op: "wait", ms: 500 }] : [];
 }
 
+/**
+ * Fault injection must not depend on what the scene happens to show. When a fault's cause is "X on while Y off"
+ * (e.g. the sorting-plausibility spec: High sensor ON while Low sensor OFF, which a real tall box never produces
+ * because it also covers Low), the requirement binds Y as `cause_clear`: every hold of the cause is preceded by
+ * FORCING Y to its inactive level, so the injected fault is deterministic. The runner releases the force after the
+ * test. Applies to every kind that binds a cause (fault_latch, reset_precondition, no_auto_restart, indicator).
+ */
+export function withExplicitCauseClear(r: BoundRequirement, scene: SceneDefinition, t: TestCase): TestCase {
+  const clear = r.bindings.cause_clear;
+  const cause = r.bindings.cause;
+  if (!clear || !cause) return t;
+  const tag = scene.tags.find((x) => x.name === clear);
+  if (!tag || tag.role !== "sensor") throw new UnbindableRequirement(r.id, `role cause_clear bound to "${clear}", which is not a PLC input`);
+  const inactive: TestStep = { op: "force", tag: clear, value: tag.activeLow };
+  const steps = t.steps.flatMap((s): TestStep[] => (s.op === "hold" && s.tag === cause ? [inactive, s] : [s]));
+  return { ...t, observe: [...new Set([...t.observe, clear])], steps };
+}
+
 export function buildTestPlan(requirements: BoundRequirement[], scene: SceneDefinition, opts: { includeHidden: boolean }): TestPlan {
   const tests: TestCase[] = [];
   const untestable: TestPlan["untestable"] = [];
@@ -71,8 +89,9 @@ export function buildTestPlan(requirements: BoundRequirement[], scene: SceneDefi
     }
     try {
       validateBindings(r, scene);
-      tests.push(...template(r).map(fromKnownState));
-      if (opts.includeHidden) tests.push(...hiddenTestsFor(r).map(fromKnownState));
+      const prepare = (t: TestCase) => fromKnownState(withExplicitCauseClear(r, scene, t));
+      tests.push(...template(r).map(prepare));
+      if (opts.includeHidden) tests.push(...hiddenTestsFor(r).map(prepare));
     } catch (err) {
       if (err instanceof UnbindableRequirement) untestable.push({ requirementId: r.id, reason: err.message });
       else throw err;

@@ -8,6 +8,17 @@
 import type { Document } from "mongodb";
 import { client, connect, db, DB_NAME } from "../apps/worker/src/db/index.ts";
 import { SEARCH_INDEX, VECTOR_FILTERS, VECTOR_INDEX, diagnosesSearchDefinition, lessonsSearchDefinition } from "../apps/worker/src/harness/search-indexes.ts";
+import {
+  PROGRAMS_COLLECTION,
+  RECALL_INDEX,
+  SPEC_RECALL_INDEX,
+  PROGRAMS_SEARCH_INDEX,
+  PROGRAMS_VECTOR_INDEX,
+  programsModel,
+  programsSearchDefinition,
+  programsValidator,
+  programsVectorDefinition,
+} from "../apps/worker/src/harness/programs.ts";
 
 const args = new Set(process.argv.slice(2));
 const log = (m: string) => console.log(m);
@@ -30,7 +41,7 @@ async function inventory() {
 const before = await inventory();
 log(`search/vector indexes in ${DB_NAME}: ${before.length}`);
 for (const i of before) log(`  ${i.collection}.${i.name} (${i.type}, ${i.status}${i.queryable ? ", queryable" : ""})`);
-const known = new Set([...Object.values(SEARCH_INDEX), ...Object.values(VECTOR_INDEX)]);
+const known = new Set<string>([...Object.values(SEARCH_INDEX), ...Object.values(VECTOR_INDEX), PROGRAMS_VECTOR_INDEX, PROGRAMS_SEARCH_INDEX]);
 const unknown = before.filter((i) => !known.has(i.name as never));
 if (unknown.length) log(`  not used by MongoMation (review; this script never drops): ${unknown.map((i) => `${i.collection}.${i.name}`).join(", ")}`);
 
@@ -77,6 +88,51 @@ for (const [name, indexName, definition] of lexical) {
   } catch (err) {
     log(`${indexName}: NOT created — ${(err as Error).message}`);
     log(`  (free/M0 clusters allow 3 search + vector indexes in total; retrieval on ${name} stays vector-only until this exists)`);
+  }
+}
+
+// 3) Verified Program Memory: collection + $jsonSchema (warn), autoEmbed vector index on embedText (sceneId
+//    filter), Atlas Search index for keyword matching. voyage-code-4 first; voyage-4 if the cluster refuses it.
+try {
+  if (!(await db.listCollections({ name: PROGRAMS_COLLECTION }, { nameOnly: true }).toArray()).length) {
+    await db.createCollection(PROGRAMS_COLLECTION, { validator: programsValidator, validationLevel: "moderate", validationAction: "warn" });
+    log(`${PROGRAMS_COLLECTION}: created with $jsonSchema validator (warn)`);
+  } else {
+    await db.command({ collMod: PROGRAMS_COLLECTION, validator: programsValidator, validationLevel: "moderate", validationAction: "warn" });
+    log(`${PROGRAMS_COLLECTION}: $jsonSchema validator applied (warn)`);
+  }
+  await db.collection(PROGRAMS_COLLECTION).createIndex({ projectId: 1 }, { unique: true, name: "projectId_unique" });
+  await db.collection(PROGRAMS_COLLECTION).createIndex({ sceneId: 1, verifiedAt: -1 }, { name: "scene_recent" });
+  await db.collection(PROGRAMS_COLLECTION).createIndex(RECALL_INDEX.keys, { name: RECALL_INDEX.name }); // experience recall: exact {sceneId, fingerprint}
+  await db.collection(PROGRAMS_COLLECTION).createIndex(SPEC_RECALL_INDEX.keys, { name: SPEC_RECALL_INDEX.name }); // spec-level recall: {sceneId, specHash}
+} catch (err) {
+  log(`${PROGRAMS_COLLECTION}: collection/validator setup failed — ${(err as Error).message}`);
+}
+{
+  const coll = db.collection(PROGRAMS_COLLECTION);
+  const existing = ((await coll.listSearchIndexes().toArray()) as Document[]).map((i) => i.name as string);
+  if (existing.includes(PROGRAMS_VECTOR_INDEX)) log(`${PROGRAMS_VECTOR_INDEX}: exists`);
+  else {
+    for (const model of [...new Set([programsModel(), "voyage-4"])]) {
+      try {
+        await coll.createSearchIndex({ name: PROGRAMS_VECTOR_INDEX, type: "vectorSearch", definition: programsVectorDefinition(model) });
+        log(`${PROGRAMS_VECTOR_INDEX}: created (autoEmbed ${model} on embedText, filter sceneId)`);
+        break;
+      } catch (err) {
+        log(`${PROGRAMS_VECTOR_INDEX}: ${model} refused — ${(err as Error).message}`);
+      }
+    }
+  }
+  if (existing.includes(PROGRAMS_SEARCH_INDEX)) {
+    if (args.has("--update")) await coll.updateSearchIndex(PROGRAMS_SEARCH_INDEX, programsSearchDefinition);
+    log(`${PROGRAMS_SEARCH_INDEX}: ${args.has("--update") ? "definition updated" : "exists"}`);
+  } else {
+    try {
+      await coll.createSearchIndex({ name: PROGRAMS_SEARCH_INDEX, type: "search", definition: programsSearchDefinition });
+      log(`${PROGRAMS_SEARCH_INDEX}: created`);
+    } catch (err) {
+      log(`${PROGRAMS_SEARCH_INDEX}: NOT created — ${(err as Error).message}`);
+    }
   }
 }
 

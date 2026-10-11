@@ -10,6 +10,7 @@ import { currentConfig } from "./harness/config.ts";
 import { claimNext, heartbeat, HEARTBEAT_MS, pendingCommand, recoverStale, setStatus, workerBeat, workerId, type JobDoc } from "./harness/jobs.ts";
 import { commandArrived, jobArrived, watchHarnessImmutability, watchJobs, watchJobTransitions } from "./harness/jobwatch.ts";
 import { BlockedError, event } from "./harness/stages.ts";
+import { isSampling } from "./harness/sampling.ts";
 import { runEngineering, newProjectId, redactRigHost } from "./pipeline/engineer.ts";
 import { runFaultAndImprove } from "./pipeline/fault.ts";
 import { runEvolveRound, runBenchmarkJob, runAblationJob, type RunLimits } from "./rsi/evolve.ts";
@@ -44,28 +45,89 @@ async function loadScene(id?: string): Promise<SceneDefinition> {
 }
 
 // --- rig monitor: live tags for the dashboard's simulation panel ---------------------------------------
+// Two loops. The FAST loop reads Factory I/O tags every RIG_POLL_MS (default 200 ms; one GET /api/tags, ~80 ms)
+// and writes rig_status only when tag values / forced tags change, plus a checkedAt heartbeat at most every
+// RIG_HEARTBEAT_MS (2 s). Reads never overlap: each tick awaits its read, then sleeps the rest of the interval.
+// The SLOW loop keeps the expensive health checks (scene lookup, OpenPLC status, Factory I/O health) on their
+// previous cadence (1.5 s pause between rounds). Test-run sampling (`measurements`) uses its own sim.read()
+// requests and fault injection its own force/release calls; neither goes through these loops. While a run is
+// sampling (harness/sampling.ts isSampling()) the fast loop skips its tag read and only refreshes the heartbeat.
+const RIG_POLL_MS = Math.max(50, Number(process.env.RIG_POLL_MS) || 200);
+const RIG_HEARTBEAT_MS = Math.max(RIG_POLL_MS, Number(process.env.RIG_HEARTBEAT_MS) || 2000);
+const RIG_HEALTH_PAUSE_MS = 1500;
+let monitorTagNames: string[] | null = null; // scene tag names, refreshed by the slow loop (null: first 40 tags)
+let simReachable = true; // last Factory I/O health result; while false the fast loop publishes empty tags
+let healthRounds = 0; // the fast loop waits for the first health round (scene tag names) before publishing
+
+void (async () => {
+  let lastKey = "";
+  let lastWrite = 0;
+  let lastErr = "";
+  for (;;) {
+    const t0 = Date.now();
+    if (!healthRounds) {
+      await sleep(RIG_POLL_MS);
+      continue;
+    }
+    // A sim run is sampling (harness/sampling.ts): skip the Factory I/O read so it never competes with the test's
+    // own sim.read() requests. rig_status keeps the last published tags; only the heartbeat is refreshed.
+    if (isSampling()) {
+      if (Date.now() - lastWrite >= RIG_HEARTBEAT_MS) {
+        await col.rigStatus().updateOne({ _id: rigId as never }, { $set: { checkedAt: new Date() } }, { upsert: true }).catch((err: unknown) => log(`rig monitor (write): ${(err as Error).message}`));
+        lastWrite = Date.now();
+      }
+      await sleep(RIG_POLL_MS);
+      continue;
+    }
+    let tags: Record<string, unknown> = {};
+    let forced: string[] = [];
+    let ok = true;
+    try {
+      if (simReachable) {
+        const all = await rig.sim.tags({ timeoutMs: Math.max(1000, RIG_POLL_MS * 5), retries: 0 });
+        forced = all.filter((t) => t.forced).map((t) => t.name);
+        const names = monitorTagNames ?? all.slice(0, 40).map((t) => t.name);
+        tags = Object.fromEntries(all.filter((t) => names.includes(t.name)).map((t) => [t.name, t.value]));
+      }
+      lastErr = "";
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg !== lastErr) log(`rig monitor (tags): ${msg}`);
+      lastErr = msg;
+      ok = false; // keep the last published tags; the slow loop's health check flips simReachable if FIO is down
+    }
+    if (ok) try {
+      const key = JSON.stringify([tags, forced]);
+      const now = Date.now();
+      if (key !== lastKey || now - lastWrite >= RIG_HEARTBEAT_MS) {
+        await col.rigStatus().updateOne({ _id: rigId as never }, { $set: { checkedAt: new Date(), forced, tags } }, { upsert: true });
+        lastKey = key;
+        lastWrite = now;
+      }
+    } catch (err) {
+      log(`rig monitor (write): ${(err as Error).message}`);
+    }
+    await sleep(Math.max(0, RIG_POLL_MS - (Date.now() - t0)));
+  }
+})();
+
 void (async () => {
   for (;;) {
     try {
       const scene = process.env.SCENE_ID ? await col.scenes().findOne({ id: process.env.SCENE_ID }) : null;
+      monitorTagNames = scene ? (scene.tags as { name: string }[]).map((t) => t.name) : null;
       const [plc, sim] = await Promise.all([rig.plc.status().catch((e) => ({ reachable: false, running: false, detail: String(e) })), rig.sim.health().catch((e) => ({ reachable: false, detail: String(e) }))]);
-      let tags: Record<string, unknown> = {};
-      let forced: string[] = [];
-      if (sim.reachable) {
-        const all = await rig.sim.tags();
-        forced = all.filter((t) => t.forced).map((t) => t.name);
-        const names = scene ? (scene.tags as { name: string }[]).map((t) => t.name) : all.slice(0, 40).map((t) => t.name);
-        tags = Object.fromEntries(all.filter((t) => names.includes(t.name)).map((t) => [t.name, t.value]));
-      }
+      simReachable = sim.reachable;
       await col.rigStatus().updateOne(
         { _id: rigId as never },
-        { $set: { checkedAt: new Date(), sceneId: process.env.SCENE_ID ?? null, openplc: plc, factoryio: sim, forced, tags, dcvUrl: process.env.DCV_URL ?? null, worker: workerId() } },
+        { $set: { sceneId: process.env.SCENE_ID ?? null, openplc: plc, factoryio: sim, dcvUrl: process.env.DCV_URL ?? null, worker: workerId() } },
         { upsert: true },
       );
     } catch (err) {
       log(`rig monitor: ${(err as Error).message}`);
     }
-    await sleep(1500);
+    healthRounds++;
+    await sleep(RIG_HEALTH_PAUSE_MS);
   }
 })();
 
@@ -82,6 +144,7 @@ void (async () => {
 watchJobs(log);
 watchJobTransitions(log); // status audit from pre/post images -> job_transitions
 watchHarnessImmutability(log); // decided harness versions must never change -> audit_log
+if (process.env.LESSON_WRITER === "1") void import("./harness/lessonwriter.ts").then((m) => m.watchLessons(log)).catch((err: unknown) => log(`lesson-writer off: ${(err as Error).message}`)); // repair-fixed failures -> lessons (fire-and-forget)
 
 // --- job loop ---------------------------------------------------------------------------------------------
 for (;;) {
@@ -122,10 +185,63 @@ for (;;) {
 
 /** Explicit run limits written on the job by scripts/evolve.ts (--limit / --max-repairs / --evidence-since). */
 function jobLimits(job: JobDoc): RunLimits {
-  const j = job as unknown as { caseLimit?: unknown; maxRepairs?: unknown; evidenceSince?: unknown };
+  const j = job as unknown as { caseLimit?: unknown; maxRepairs?: unknown; evidenceSince?: unknown; caseIds?: unknown };
   const int = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined);
   const since = j.evidenceSince instanceof Date ? j.evidenceSince : typeof j.evidenceSince === "string" ? new Date(j.evidenceSince) : undefined;
-  return { caseLimit: int(j.caseLimit) || undefined, maxRepairs: int(j.maxRepairs), evidenceSince: since && !Number.isNaN(since.getTime()) ? since : undefined };
+  const caseIds = Array.isArray(j.caseIds) ? j.caseIds.filter((x): x is string => typeof x === "string" && x.length > 0) : [];
+  return { caseLimit: int(j.caseLimit) || undefined, maxRepairs: int(j.maxRepairs), evidenceSince: since && !Number.isNaN(since.getTime()) ? since : undefined, caseIds: caseIds.length ? caseIds : undefined };
+}
+
+/** Job option `memory: true|false` (Verified Program Memory for codegen); absent -> MEMORY_PROGRAMS env decides. */
+/** Job option `targetedRetest: true|false` (repair rounds re-test only previous failures); absent -> TARGETED_RETEST env. */
+function jobTargetedRetest(job: JobDoc): boolean | undefined {
+  const t = (job as unknown as { targetedRetest?: unknown }).targetedRetest;
+  return typeof t === "boolean" ? t : undefined;
+}
+
+function jobMemory(job: JobDoc): boolean | undefined {
+  const m = (job as unknown as { memory?: unknown }).memory;
+  return typeof m === "boolean" ? m : undefined;
+}
+
+/** Job option `recall: true|false` (alias `fastpath`): experience recall; absent -> on whenever program memory is on. */
+function jobRecall(job: JobDoc): boolean | undefined {
+  const j = job as unknown as { recall?: unknown; fastpath?: unknown };
+  return typeof j.recall === "boolean" ? j.recall : typeof j.fastpath === "boolean" ? j.fastpath : undefined;
+}
+
+/** Learning-curve properties on the job's Raindrop event (dashboard "MongoMation — RSI learning curve" and the
+ *  recall ON/OFF experiment read them via RQL properties.<key>). Sourced from project.metrics / project.recall
+ *  written by runEngineering; any field a harness does not write is simply omitted. Never throws. */
+async function learningCurveProps(projectId: string, r: { status: string; attempts: number; costUsd: number; seconds: number }) {
+  const p = (await col.projects().findOne({ _id: projectId as never }, { projection: { metrics: 1, recall: 1 } }).catch(() => null)) as {
+    metrics?: { memoryRequested?: boolean; memoryUsed?: boolean; retrievalMs?: number; firstPass?: boolean; timeToVerifiedSec?: number | null; targetedRetest?: boolean; testMs?: number; runIndex?: number; tests?: { passed: number; total: number } | null };
+    recall?: { kind?: string; msSaved?: number; lookupMs?: number };
+  } | null;
+  const m = p?.metrics ?? {};
+  const out: Record<string, string | number | boolean> = {
+    status: r.status,
+    attempts: r.attempts,
+    repairs: Math.max(0, r.attempts - 1),
+    cost_usd: Math.round(r.costUsd * 10_000) / 10_000,
+    seconds: r.seconds,
+    recall_kind: p?.recall?.kind ?? "none",
+    memory: m.memoryRequested ? "on" : "off",
+  };
+  const num = (k: string, v: unknown) => typeof v === "number" && Number.isFinite(v) && (out[k] = v);
+  const bool = (k: string, v: unknown) => typeof v === "boolean" && (out[k] = v);
+  num("time_to_verified_sec", m.timeToVerifiedSec);
+  num("run_index", m.runIndex);
+  num("retrieval_ms", m.retrievalMs);
+  num("test_ms", m.testMs);
+  num("tests_passed", m.tests?.passed);
+  num("tests_total", m.tests?.total);
+  num("recall_ms_saved", p?.recall?.msSaved);
+  num("recall_lookup_ms", p?.recall?.lookupMs);
+  bool("memory_used", m.memoryUsed);
+  bool("first_pass", m.firstPass);
+  bool("targeted_retest", m.targetedRetest);
+  return out;
 }
 
 async function dispatch(type: JobType, job: JobDoc, jobId: string) {
@@ -142,8 +258,8 @@ async function dispatch(type: JobType, job: JobDoc, jobId: string) {
       // A resumed job (crash / stale reclaim) continues the Raindrop interaction its first attempt began.
       const rdEventId = telemetry.beginRun(projectId, { event: "engineering_job", input: job.specText ?? "", properties: { harness_version: config.version, scene: scene.id, origin: job.origin }, featureFlags: harnessFlags(config), resumeEventId: (job as { raindropEventId?: string }).raindropEventId });
       if (rdEventId) await col.jobs().updateOne({ _id: job._id }, { $set: { raindropEventId: rdEventId } });
-      const r = await telemetry.span(projectId, "engineering", () => runEngineering({ projectId, jobId, specText: job.specText ?? "", scene, config }, { ...rig, rigId }));
-      await telemetry.finishRun(projectId, `${r.status} after ${r.attempts} attempt(s)`, { status: r.status, attempts: r.attempts });
+      const r = await telemetry.span(projectId, "engineering", () => runEngineering({ projectId, jobId, specText: job.specText ?? "", scene, config, memory: jobMemory(job), recall: jobRecall(job), targetedRetest: jobTargetedRetest(job) }, { ...rig, rigId }));
+      await telemetry.finishRun(projectId, `${r.status} after ${r.attempts} attempt(s)`, await learningCurveProps(projectId, r));
       return { projectId, ...r, lastSimRun: r.lastSimRun && { simRunId: r.lastSimRun.simRunId, passed: r.lastSimRun.passed, failed: r.lastSimRun.failed, blocked: r.lastSimRun.blocked } };
     }
     case "fault_and_improve": {
@@ -162,7 +278,7 @@ async function dispatch(type: JobType, job: JobDoc, jobId: string) {
       await col.projects().updateOne({ _id: job.projectId as never }, { $set: { specText: job.specText, revision, status: "running" }, $push: { specHistory: { revision, specText: job.specText, at: new Date() } } as never });
       telemetry.beginRun(job.projectId, { event: "spec_change", input: job.specText ?? "", properties: { revision }, featureFlags: harnessFlags(config) });
       const r = await runEngineering(
-        { projectId: job.projectId, jobId, specText: job.specText ?? "", scene, config, revision, baselineSource: (baseline?.source as string | undefined) ?? undefined },
+        { projectId: job.projectId, jobId, specText: job.specText ?? "", scene, config, revision, baselineSource: (baseline?.source as string | undefined) ?? undefined, memory: jobMemory(job), targetedRetest: jobTargetedRetest(job) },
         { ...rig, rigId },
       );
       await telemetry.finishRun(job.projectId, `${r.status} after ${r.attempts} attempt(s)`, { status: r.status });

@@ -1,0 +1,20 @@
+{
+  "name": "@mongomation/plant-sim",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Software-in-the-loop plant simulator for Sorting by Height (Basic), closed-loop with OpenPLC over Modbus TCP.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "mock-plc": "node test/mock-plc.js",
+    "test:loop": "node test/closed-loop.test.js"
+  },
+  "dependencies": {
+    "modbus-serial": "^8.0.25",
+    "mongodb": "^6.21.0",
+    "ws": "^8.22.0"
+  }
+}

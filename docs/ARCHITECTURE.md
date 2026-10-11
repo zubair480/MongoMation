@@ -100,8 +100,15 @@ We are on Raindrop's free (Hobby, ~1,000 cloud events/month) tier: no hosted Eva
   event/span to Workshop while still sending to cloud (`telemetry/raindrop.ts: workshopUrl`). Opt-in only — unset,
   `localWorkshopUrl: false` disables the SDK's dev auto-detect. `RAINDROP_WORKSHOP=1 npm run raindrop:smoke` checks
   both sinks.
-- **Event budget**: per-test cloud events are off unless `RAINDROP_CLOUD_PER_TEST=1`; each simulator test stays a
-  tool span (with its error) on the job event. Cloud events per job ≈ 1 job + 1 per model call.
+- **Event budget**: Pro plan (events metered, not capped), so per-test cloud events are ON by default: each
+  simulator test is its own event, a sub-agent of the job, and also a tool span on it. `RAINDROP_CLOUD_PER_TEST=0`
+  turns them off (Hobby: 1,000 events/month). Cloud events per job ≈ 1 job + 1 per model call + 1 per test.
+- **Typed signals / Self Diagnostics**: critic verdicts are `feedback` signals (`critic_verdict`, comment = critique)
+  and each repair is an `edit` signal (`repair_edit`, after = repaired program, diff in properties) on the event of
+  the model call that wrote the program being corrected (codegen, then the previous repair). Binder unsupported
+  requirements (`capability_gap`), critic root causes (`root_cause`) and model refusals (`refusal`) go to
+  Raindrop Self Diagnostics (`selfDiagnose`), derived from existing agent output; the model call is unchanged.
+  `RAINDROP_REDACT_PII=1` turns on SDK PII redaction (off by default: payloads are PLC specs and code).
 - **Evals**: `npm run workshop:eval` (= `raindrop:eval`; `scripts/workshop-eval.ts`) lists root job events via the
   Query API (reads, no ingest cost), imports their traces into Workshop (`/api/cloud/traces/import`), and scores each
   run from its Workshop spans: final compile passed, simulator pass rate (last attempt per test), repair budget not

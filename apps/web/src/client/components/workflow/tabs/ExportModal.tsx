@@ -21,7 +21,9 @@ export default function ExportModal({ run, p, source, io, onClose }: { run: RunV
   const ver = p?.project?.currentVersion;
   const ok = p?.verdicts.filter((v) => isOk(v.status)).length ?? 0, total = p?.verdicts.length ?? 0;
   const reqIds = p?.requirements?.items.map((r) => r.id) ?? [];
-  const head = `MongoMation export · project ${p?.project?.id ?? '—'} · program v${ver ?? '—'} · ${ok}/${total} requirements verified on Factory I/O · target ${T.n}`;
+  const head = run.reused
+    ? `MongoMation export · project ${p?.project?.id ?? '—'} · program v${ver ?? '—'} · verified by reuse (recalled from project ${p?.project?.reusedFrom?.projectId ?? p?.project?.recall?.sourceProjectId ?? '—'}; NOT re-tested in this project) · target ${T.n}`
+    : `MongoMation export · project ${p?.project?.id ?? '—'} · program v${ver ?? '—'} · ${ok}/${total} requirements verified on Factory I/O · target ${T.n}`;
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const text = target === 'openplc' ? `(* ${head} *)\n${code}\n`
     : target === 'rockwell' ? `<?xml version="1.0" encoding="UTF-8"?>\n<!-- ${head.replace(/--/g, '-')} -->\n<RSLogix5000Content SchemaRevision="1.0" TargetName="SortingStation" TargetType="Program">\n <Controller Use="Context" Name="MongoMation">\n  <Programs><Program Name="MainProgram" MainRoutineName="Main">\n   <Routines><Routine Name="Main" Type="ST"><STContent>\n${code.split('\n').map((l, i) => `    <Line Number="${i}"><![CDATA[${l.replace(/]]>/g, ']]]]><![CDATA[>')}]]></Line>`).join('\n')}\n   </STContent></Routine></Routines>\n  </Program></Programs>\n </Controller>\n</RSLogix5000Content>\n`
@@ -32,7 +34,7 @@ export default function ExportModal({ run, p, source, io, onClose }: { run: RunV
   };
   const copy = () => { void navigator.clipboard?.writeText(code).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1200); }).catch(() => undefined); };
   return (<div className="scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}><div className="modal" role="dialog" aria-label="Export to PLC">
-    <div className="mh">{ICON_EXPORT}<h2>Export to a real PLC</h2><span className={`pill ${run.verified ? 'go' : 'ca'}`}><i />v{ver ?? '—'} · {ok}/{total} verified</span><button className="x" onClick={onClose} aria-label="Close">✕</button></div>
+    <div className="mh">{ICON_EXPORT}<h2>Export to a real PLC</h2><span className={`pill ${run.verified ? 'go' : 'ca'}`}><i />v{ver ?? '—'} · {run.reused ? 'verified by reuse' : `${ok}/${total} verified`}</span><button className="x" onClick={onClose} aria-label="Close">✕</button></div>
     <div className="mb">
       <p className="lbl">Target platform</p>
       <div className="targets">{Object.entries(TARGETS).map(([k, t]) => <button key={k} className={`tg ${target === k ? 'on' : ''}`} onClick={() => setTarget(k)}><div className="n">{t.n}</div><div className="f">{t.f}</div></button>)}</div>

@@ -208,7 +208,35 @@ export const PUBLIC_TEMPLATES: Partial<Record<BoundRequirement["kind"], Template
     ];
   },
 
+  // A lamp shows ONE machine state, named by params.when: "running" (default; a run/status lamp) or "fault"
+  // (a fault/alarm lamp, e.g. "light the Reset light as a fault lamp"). A fault lamp must NOT be tested as a run
+  // lamp: live RSI runs (sorting-plausibility) failed a latch-driven Reset light against "on when running".
   indicator: (r) => {
+    const when = indicatorWhen(r);
+    if (when === undefined) throw new UnbindableRequirement(r.id, `indicator param when="${String(r.params.when)}" is neither "running" nor "fault"`);
+    if (when === "fault") {
+      // A fault lamp is the same lamp the latch requirements call fault_indicator; accept either role key.
+      const lampRole = r.bindings.fault_indicator ? "fault_indicator" : "indicator";
+      const [light, cause] = need(r, lampRole, "cause");
+      const reset = r.bindings.reset;
+      const timeout = num(r, "timeoutMs", 0);
+      return [
+        tc(r, "fault-light", `${light} is lit while the fault (${cause}) is active${reset ? ` and off after a valid ${reset}` : ""}`, "fault_latch", [light, cause, ...Object.values(r.bindings)], [
+          ...startIfBound(r),
+          { op: "expectStable", tag: light, value: false, forMs: 1500, label: `${light} off with no fault${r.bindings.start ? " (line running)" : ""}` },
+          { op: "hold", tag: cause },
+          { op: "expect", tag: light, value: true, withinMs: timeout + RESPONSE_MS, label: `${light} on while the fault is active` },
+          { op: "release", tag: cause },
+          ...(reset
+            ? [
+                { op: "wait", ms: 500 } as TestStep,
+                { op: "press", tag: reset, holdMs: PRESS_MS } as TestStep,
+                { op: "expect", tag: light, value: false, withinMs: RESPONSE_MS, label: `${light} off after ${reset} with the cause gone` } as TestStep,
+              ]
+            : []),
+        ]),
+      ];
+    }
     const [start, stop, light] = need(r, "start", "stop", "indicator");
     return [
       tc(r, "light", `${light} shows the running state`, "state_transition", [start, stop, light], [
@@ -263,6 +291,16 @@ export const PUBLIC_TEMPLATES: Partial<Record<BoundRequirement["kind"], Template
     ];
   },
 };
+
+/** Which state an indicator lamp shows: params.when "running" (default) or "fault" (default when a fault_indicator is bound); undefined = unrecognized. */
+export function indicatorWhen(r: BoundRequirement): "running" | "fault" | undefined {
+  const v = r.params.when;
+  // No explicit when: a requirement that binds a fault_indicator is a fault lamp by its own role.
+  if (v === undefined || v === "") return r.bindings.fault_indicator ? "fault" : "running";
+  if (typeof v !== "string") return undefined;
+  const s = v.trim().toLowerCase();
+  return s === "running" || s === "run" ? "running" : s === "fault" || s === "alarm" ? "fault" : undefined;
+}
 
 /** Which classifier state selects this route. Default true; `false` (or "false") means NOT detected by it. */
 export function classifierValue(r: BoundRequirement): boolean {

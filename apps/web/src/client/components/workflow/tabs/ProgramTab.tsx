@@ -18,7 +18,7 @@ export function hl(l: string) {
 }
 
 export function Editor({ source, title, stream = false }: { source?: string; title: string; stream?: boolean }) {
-  const lines = React.useMemo(() => (source ?? '').split('\n'), [source]);
+  const lines = React.useMemo(() => (source ?? '').replace(/\n+$/, '').split('\n'), [source]);
   const [shown, setShown] = React.useState(stream ? 0 : lines.length);
   const ref = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
@@ -56,7 +56,7 @@ export function Term({ p }: { p: ProjectData }) {
   });
   [...p.events].reverse().filter((e) => e.stage === 'deploy' || e.stage === 'simulate').forEach((e) => rows.push([e.level === 'error' ? 'hi' : '', `${t8(e.ts)}  ${e.stage} · ${e.message}`]));
   React.useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [rows.length]);
-  return <div className="term" ref={ref}>{rows.length ? rows.map(([c, t], i) => <div key={i} className={c}>{t}</div>) : <div className="dim">waiting for program…</div>}</div>;
+  return <div className="term" ref={ref}>{rows.length ? rows.map(([c, t], i) => <div key={i} className={c}>{t.startsWith('$ ') ? <><span className="pr">$</span>{t.slice(1)}</> : t}</div>) : <div className="dim">waiting for program…</div>}<div className="cur"><span className="pr">$</span> <span className="caret" /></div></div>;
 }
 
 /* ---------- I/O rows: the project's bound I/O, else the scene's tag map ---------- */
@@ -71,7 +71,7 @@ function VersionCard({ id, version, createdBy, current, at }: { id: string; vers
   const q = usePlcSource(id);
   const d = q.data && q.data.connected && q.data.found ? q.data : null;
   const diff = (d?.diff ?? []).filter((l) => l.startsWith('+ ') || l.startsWith('- '));
-  return (<div className="card"><div className="ch"><h3>v{version ?? '—'} · {createdBy ?? 'codegen'}</h3><span className={`pill ${current ? 'go' : 'nt'}`}>{current ? <><i />current</> : 'superseded'}</span><span className="r sub">{d?.source ? `${d.source.split('\n').length} lines · ` : ''}{at ? new Date(at).toLocaleString() : ''}</span></div>
+  return (<div className="card"><div className="ch"><h3>v{version ?? '—'} · {createdBy ?? 'codegen'}</h3><span className={`pill ${current ? 'go' : 'nt'}`}>{current ? <><i />current</> : 'superseded'}</span><span className="r sub">{d?.source ? `${d.source.replace(/\n+$/, '').split('\n').length} lines · ` : ''}{at ? new Date(at).toLocaleString() : ''}</span></div>
     {diff.length ? <div className="cb"><div className="diff">{diff.slice(0, 24).map((l, i) => <div key={i} className={l[0] === '+' ? 'p' : 'm'}>{l}</div>)}</div></div>
       : <div className="cb"><p style={{ margin: 0, fontSize: 13.5, color: 'var(--ink2)' }}>{!d ? (q.isLoading ? 'Loading source…' : 'Source not available') : d.diff === null ? 'First version · generated from the requirements.' : 'No line changes recorded.'}</p></div>}</div>);
 }

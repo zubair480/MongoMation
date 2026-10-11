@@ -17,6 +17,31 @@ export interface EngineeringContext {
   stateMachine?: StateMachine;
   /** Mid-project spec change: the previously verified program. Evolve it; keep verified behaviour intact. */
   baselineSource?: string;
+  /** Verified Program Memory (MEMORY_PROGRAMS=1): closest programs that passed ALL their rig tests. Counts only. */
+  referencePrograms?: ReferenceProgram[];
+}
+
+export interface ReferenceProgram {
+  projectId: string;
+  score: number;
+  specText: string;
+  requirementsSummary: string;
+  stSource: string;
+  tests: { passed: number; total: number };
+}
+
+/** Prompt section for verified reference programs (empty string when there are none). */
+export function referenceProgramsBlock(refs: ReferenceProgram[] | undefined): string {
+  if (!refs?.length) return "";
+  const items = refs.map(
+    (r, i) =>
+      `### Reference ${i + 1} (project ${r.projectId}, similarity ${r.score.toFixed(4)}): VERIFIED on the real rig, ${r.tests.passed}/${r.tests.total} tests passed\nIts specification:\n${r.specText}\nIts requirements:\n${r.requirementsSummary}\nIts verified program:\n${r.stSource}`,
+  );
+  return `## Verified reference programs (proven on the real rig for similar specifications)
+Reuse the proven structure of the closest reference (state handling, seal-in/latch patterns, timers, fault handling, output
+assignment) and adapt it to the differences in THIS specification, requirements and I/O table. Use only the I/O variables
+declared above; requirements that differ from the reference must follow this specification, not the reference.
+${items.join("\n\n")}`;
 }
 
 export const StateMachine = z.object({
@@ -52,7 +77,7 @@ Conventions:
 - Compare like types only (INT with INT, REAL with REAL); convert with INT_TO_REAL / REAL_TO_INT when needed.
 - Outputs must be FALSE in any stopped or faulted state unless a requirement says otherwise.`;
 
-function contextBlock(ctx: EngineeringContext, config: HarnessConfig) {
+export function contextBlock(ctx: EngineeringContext, config: HarnessConfig) {
   const io = ctx.io.map((p) => `- ${p.variable} : ${p.dataType} = "${p.tag}" (${p.role === "sensor" ? "input" : "output"}${p.activeLow ? ", active-low: FALSE when pressed/blocked" : ""})`).join("\n");
   const reqs = ctx.requirements
     .map((r) => (r.support === "supported" ? `- ${r.id} [${r.kind}] ${r.text} (roles: ${JSON.stringify(r.bindings)}; params: ${JSON.stringify(r.params)})` : `- ${r.id} UNSUPPORTED on this scene: ${r.text}`))
@@ -66,6 +91,8 @@ function contextBlock(ctx: EngineeringContext, config: HarnessConfig) {
   if (config.rules.length) parts.push(`## Engineering rules (mandatory)\n${config.rules.map((r) => `- ${r}`).join("\n")}`);
   if (ctx.lessons.length) parts.push(`## Lessons from verified past projects\n${ctx.lessons.map((l) => `- When ${l.pattern}: ${l.fix}`).join("\n")}`);
   if (ctx.similarFailures.length) parts.push(`## Failures seen on similar projects\n${ctx.similarFailures.map((f) => `- ${f}`).join("\n")}`);
+  const refs = referenceProgramsBlock(ctx.referencePrograms);
+  if (refs) parts.push(refs);
   if (ctx.stateMachine) parts.push(`## Verified state machine (implement it exactly)\n${JSON.stringify(ctx.stateMachine, null, 2)}`);
   if (ctx.baselineSource)
     parts.push(`## Previously verified program (the specification changed)\nModify this program to satisfy the changed requirements. Keep the logic for unchanged requirements as it is; every requirement is re-tested.\n${ctx.baselineSource}`);

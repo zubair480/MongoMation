@@ -39,7 +39,7 @@ export interface SimTag {
 export interface Simulator extends SimRig {
   readonly label: string;
   health(): Promise<{ reachable: boolean; detail: string; tagCount?: number }>;
-  tags(): Promise<SimTag[]>;
+  tags(opts?: { timeoutMs?: number; retries?: number }): Promise<SimTag[]>;
   /** Releases forced scene SENSOR tags (never pre-forced outputs). Called on worker start and before every run. */
   releaseAll(): Promise<string[]>;
   /** Scene setup steps around a test suite (stop/restore the box emitter, reset the scene). */

@@ -111,6 +111,7 @@ export function projectTone(status: string | undefined): Tone {
     case 'running':
       return 'active';
     case 'verified':
+    case 'verified-by-reuse': // final + successful; the label (upper()) still reads "VERIFIED-BY-REUSE"
       return 'good';
     case 'partially_verified':
     case 'blocked':

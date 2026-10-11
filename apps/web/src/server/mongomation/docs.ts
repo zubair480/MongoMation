@@ -243,6 +243,20 @@ export function toProject(d: Document): ProjectDetail {
     costUsd: num(d.costUsd),
     createdAt: date(d.createdAt),
     unsupported: objArr(d.unsupported).map((u) => ({ id: str(u.id), reason: clip(str(u.reason), 400) })),
+    ...recallFields(d),
+  };
+}
+
+// Experience recall (whitelisted; the fingerprint, reason text and source test list stay on the server).
+function recallFields(d: Document): Pick<ProjectDetail, 'recall' | 'runIndex' | 'reusedFrom'> {
+  const r = obj(d.recall);
+  const m = obj(d.metrics);
+  const rf = obj(d.reusedFrom);
+  const rt = obj(rf?.tests);
+  return {
+    recall: r ? { kind: str(r.kind), sourceProjectId: str(r.sourceProjectId), score: num(r.score), msSaved: num(r.msSaved), confirmed: typeof r.confirmed === 'boolean' ? r.confirmed : undefined } : undefined,
+    runIndex: num(m?.runIndex) ?? num(r?.runIndex),
+    reusedFrom: rf ? { projectId: str(rf.projectId), tests: rt ? { passed: num(rt.passed), total: num(rt.total) } : undefined } : undefined,
   };
 }
 
