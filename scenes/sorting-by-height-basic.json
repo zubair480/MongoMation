@@ -2,49 +2,334 @@
   "id": "sorting-by-height-basic",
   "factoryIoScene": "Sorting by Height (Basic)",
   "title": "Sorting by Height (Basic)",
-  "description": "Entry conveyor feeding a chain transfer that sends boxes left or right by height (high/low diffuse sensors), two exit conveyors with retroreflective eyes, operator panel (Start, Stop, Reset, Emergency stop, Auto/Manual), three panel lights and a counter display. Addresses = the scene's default Modbus TCP/IP Server layout read from the scene file (docs/research/factoryio.md §3.5). UNVERIFIED until Developer 1 runs the probe on the live rig.",
-  "capabilities": ["conveyor", "chain_transfer", "diffuse_sensor", "retroreflective_sensor", "pushbutton", "emergency_stop", "selector", "light", "counter_display"],
+  "description": "Entry conveyor feeding a chain transfer that sends boxes left or right by height (high/low diffuse sensors), two exit conveyors with retroreflective eyes, operator panel (Start, Stop, Reset, Emergency stop, Auto), three panel lights and a counter display. Live rig: Factory I/O is the Modbus TCP client of the OpenPLC v4 Modbus server; sensors are coils 100+ (declared AT %QX12.4.. and only read), actuators coils 0+ (%QX0.0..), counter holding register 0 (%QW0). I/O map verified live by Developer 1 (rig handoff, 2026-10-11).",
+  "capabilities": [
+    "conveyor",
+    "chain_transfer",
+    "diffuse_sensor",
+    "retroreflective_sensor",
+    "pushbutton",
+    "emergency_stop",
+    "selector",
+    "light",
+    "counter_display"
+  ],
   "tags": [
-    { "name": "High sensor", "role": "sensor", "dataType": "BOOL", "plcAddress": "%IX100.0", "kind": "diffuse_sensor", "description": "TRUE while a tall box passes the height gate", "activeLow": false, "fioKind": "Input", "webApiId": "52052c12-f2ba-4289-a574-9ba7bd5ac0a2" },
-    { "name": "Low sensor", "role": "sensor", "dataType": "BOOL", "plcAddress": "%IX100.1", "kind": "diffuse_sensor", "description": "TRUE while any box passes the height gate", "activeLow": false, "fioKind": "Input", "webApiId": "8e91c4f8-08ff-42dd-9f86-7e06c77cbf57" },
-    { "name": "Pallet sensor", "role": "sensor", "dataType": "BOOL", "plcAddress": "%IX100.2", "kind": "diffuse_sensor", "description": "TRUE while a box waits at the end of the entry conveyor (in front of the transfer)", "activeLow": false, "fioKind": "Input", "webApiId": "09dc60bb-47e4-4783-9a9b-32f1dd1a60fd" },
-    { "name": "Loaded", "role": "sensor", "dataType": "BOOL", "plcAddress": "%IX100.3", "kind": "presence_sensor", "description": "TRUE when a box is on the chain transfer", "activeLow": false, "fioKind": "Input", "webApiId": "8c905137-00c0-418a-aaff-f4371ea800e4" },
-    { "name": "At left entry", "role": "sensor", "dataType": "BOOL", "plcAddress": "%IX100.4", "kind": "retroreflective_sensor", "description": "left lane entry eye; FALSE while a box blocks it", "activeLow": true, "fioKind": "Input", "webApiId": "1efa965c-b01e-40e0-9053-d1efc50a4c31" },
-    { "name": "At left exit", "role": "sensor", "dataType": "BOOL", "plcAddress": "%IX100.5", "kind": "retroreflective_sensor", "description": "left lane exit eye; FALSE while a box blocks it", "activeLow": true, "fioKind": "Input", "webApiId": "cc8294d8-31e2-4fc7-860b-9ee83a9708fb" },
-    { "name": "At right entry", "role": "sensor", "dataType": "BOOL", "plcAddress": "%IX100.6", "kind": "retroreflective_sensor", "description": "right lane entry eye; FALSE while a box blocks it", "activeLow": true, "fioKind": "Input", "webApiId": "13ba32d0-9879-4a9a-a966-23b978a96a54" },
-    { "name": "At right exit", "role": "sensor", "dataType": "BOOL", "plcAddress": "%IX100.7", "kind": "retroreflective_sensor", "description": "right lane exit eye; FALSE while a box blocks it", "activeLow": true, "fioKind": "Input", "webApiId": "de72ef2c-93e1-4abb-8cc0-ff01b11e8f14" },
-    { "name": "Start", "role": "sensor", "dataType": "BOOL", "plcAddress": "%IX101.0", "kind": "pushbutton", "description": "green Start push button (NO)", "activeLow": false, "fioKind": "Input", "webApiId": "ec38f1b3-ee81-431d-81b5-b9e9ea50371a" },
-    { "name": "Reset", "role": "sensor", "dataType": "BOOL", "plcAddress": "%IX101.1", "kind": "pushbutton", "description": "Reset push button (NO)", "activeLow": false, "fioKind": "Input", "webApiId": "bf9730af-8058-4857-aca1-752fa3e4dabe" },
-    { "name": "Stop", "role": "sensor", "dataType": "BOOL", "plcAddress": "%IX101.2", "kind": "pushbutton", "description": "red Stop push button (NC: TRUE at rest, FALSE when pressed)", "activeLow": true, "fioKind": "Input", "webApiId": "df43b72e-992a-4936-9d46-32764400b933" },
-    { "name": "Emergency stop", "role": "sensor", "dataType": "BOOL", "plcAddress": "%IX101.3", "kind": "emergency_stop", "description": "mushroom e-stop (NC, latching: TRUE healthy, FALSE when pressed)", "activeLow": true, "fioKind": "Input", "webApiId": "a6076c84-fca7-4b87-9f64-c02339be30da" },
-    { "name": "Auto", "role": "sensor", "dataType": "BOOL", "plcAddress": "%IX101.4", "kind": "selector", "description": "Auto position of the Auto/Manual selector (rests on Manual)", "activeLow": false, "fioKind": "Input", "webApiId": "c413366b-dc8f-4ab8-884b-44c34fadee9a" },
-    { "name": "Conveyor entry", "role": "actuator", "dataType": "BOOL", "plcAddress": "%QX100.0", "kind": "conveyor", "description": "entry belt conveyor motor", "activeLow": false, "fioKind": "Output", "webApiId": "b1629365-01ad-4df4-bc84-0afa188f1a20" },
-    { "name": "Load", "role": "actuator", "dataType": "BOOL", "plcAddress": "%QX100.1", "kind": "chain_transfer", "description": "chain transfer rollers: load a box from the entry conveyor", "activeLow": false, "fioKind": "Output", "webApiId": "c1ddcc93-39f7-4e2d-af3b-f5dfe4e2bb8c" },
-    { "name": "Unload", "role": "actuator", "dataType": "BOOL", "plcAddress": "%QX100.2", "kind": "chain_transfer", "description": "chain transfer rollers: unload", "activeLow": false, "fioKind": "Output", "webApiId": "32025197-e0ff-4560-a58b-770f0e41ab6d" },
-    { "name": "Transf. left", "role": "actuator", "dataType": "BOOL", "plcAddress": "%QX100.3", "kind": "chain_transfer", "description": "chain transfer moves the box to the left lane", "activeLow": false, "fioKind": "Output", "webApiId": "2278a6d8-5176-4fac-b44a-70662cd606a3" },
-    { "name": "Transf. right", "role": "actuator", "dataType": "BOOL", "plcAddress": "%QX100.4", "kind": "chain_transfer", "description": "chain transfer moves the box to the right lane", "activeLow": false, "fioKind": "Output", "webApiId": "040505a7-56ca-467c-806b-52fee05e942e" },
-    { "name": "Conveyor left", "role": "actuator", "dataType": "BOOL", "plcAddress": "%QX100.5", "kind": "conveyor", "description": "left exit conveyor motor", "activeLow": false, "fioKind": "Output", "webApiId": "3627aa26-16a9-4d32-8d80-ac8b3b078fe5" },
-    { "name": "Conveyor right", "role": "actuator", "dataType": "BOOL", "plcAddress": "%QX100.6", "kind": "conveyor", "description": "right exit conveyor motor", "activeLow": false, "fioKind": "Output", "webApiId": "4c936da3-ed49-41fc-a34a-9e595f5d01f6" },
-    { "name": "Start light", "role": "actuator", "dataType": "BOOL", "plcAddress": "%QX100.7", "kind": "light", "description": "green panel light", "activeLow": false, "fioKind": "Output", "webApiId": "a6edfd36-d3cd-4b32-b565-63cc6149478f" },
-    { "name": "Reset light", "role": "actuator", "dataType": "BOOL", "plcAddress": "%QX101.0", "kind": "light", "description": "yellow panel light", "activeLow": false, "fioKind": "Output", "webApiId": "75512fd4-1144-4fac-94d4-767fe820508c" },
-    { "name": "Stop light", "role": "actuator", "dataType": "BOOL", "plcAddress": "%QX101.1", "kind": "light", "description": "red panel light (usable as fault lamp)", "activeLow": false, "fioKind": "Output", "webApiId": "d6749eab-0ea8-42c5-adde-2ddbaad46430" },
-    { "name": "Counter", "role": "actuator", "dataType": "INT", "plcAddress": "%QW100", "kind": "counter_display", "description": "panel digital display (holding register 0)", "activeLow": false, "fioKind": "Output", "webApiId": "45a714bf-77bb-47e7-b046-43e29c59b9e0" }
+    {
+      "name": "High sensor",
+      "role": "sensor",
+      "dataType": "BOOL",
+      "plcAddress": "%QX12.4",
+      "kind": "diffuse_sensor",
+      "description": "TRUE while a tall box passes the height gate",
+      "activeLow": false,
+      "fioKind": "Input"
+    },
+    {
+      "name": "Low sensor",
+      "role": "sensor",
+      "dataType": "BOOL",
+      "plcAddress": "%QX12.5",
+      "kind": "diffuse_sensor",
+      "description": "TRUE while any box passes the height gate",
+      "activeLow": false,
+      "fioKind": "Input"
+    },
+    {
+      "name": "Pallet sensor",
+      "role": "sensor",
+      "dataType": "BOOL",
+      "plcAddress": "%QX12.6",
+      "kind": "diffuse_sensor",
+      "description": "TRUE while a box waits at the end of the entry conveyor (in front of the transfer)",
+      "activeLow": false,
+      "fioKind": "Input"
+    },
+    {
+      "name": "Loaded",
+      "role": "sensor",
+      "dataType": "BOOL",
+      "plcAddress": "%QX12.7",
+      "kind": "presence_sensor",
+      "description": "TRUE when a box is on the chain transfer",
+      "activeLow": false,
+      "fioKind": "Input"
+    },
+    {
+      "name": "At left entry",
+      "role": "sensor",
+      "dataType": "BOOL",
+      "plcAddress": "%QX13.0",
+      "kind": "retroreflective_sensor",
+      "description": "left lane entry eye; FALSE while a box blocks it",
+      "activeLow": true,
+      "fioKind": "Input"
+    },
+    {
+      "name": "At left exit",
+      "role": "sensor",
+      "dataType": "BOOL",
+      "plcAddress": "%QX13.1",
+      "kind": "retroreflective_sensor",
+      "description": "left lane exit eye; FALSE while a box blocks it",
+      "activeLow": true,
+      "fioKind": "Input"
+    },
+    {
+      "name": "At right entry",
+      "role": "sensor",
+      "dataType": "BOOL",
+      "plcAddress": "%QX13.2",
+      "kind": "retroreflective_sensor",
+      "description": "right lane entry eye; FALSE while a box blocks it",
+      "activeLow": true,
+      "fioKind": "Input"
+    },
+    {
+      "name": "At right exit",
+      "role": "sensor",
+      "dataType": "BOOL",
+      "plcAddress": "%QX13.3",
+      "kind": "retroreflective_sensor",
+      "description": "right lane exit eye; FALSE while a box blocks it",
+      "activeLow": true,
+      "fioKind": "Input"
+    },
+    {
+      "name": "Start",
+      "role": "sensor",
+      "dataType": "BOOL",
+      "plcAddress": "%QX13.4",
+      "kind": "pushbutton",
+      "description": "green Start push button (NO)",
+      "activeLow": false,
+      "fioKind": "Input"
+    },
+    {
+      "name": "Reset",
+      "role": "sensor",
+      "dataType": "BOOL",
+      "plcAddress": "%QX13.5",
+      "kind": "pushbutton",
+      "description": "Reset push button (NO)",
+      "activeLow": false,
+      "fioKind": "Input"
+    },
+    {
+      "name": "Stop",
+      "role": "sensor",
+      "dataType": "BOOL",
+      "plcAddress": "%QX13.6",
+      "kind": "pushbutton",
+      "description": "red Stop push button (NC: TRUE at rest, FALSE when pressed)",
+      "activeLow": true,
+      "fioKind": "Input"
+    },
+    {
+      "name": "Emergency stop",
+      "role": "sensor",
+      "dataType": "BOOL",
+      "plcAddress": "%QX13.7",
+      "kind": "emergency_stop",
+      "description": "mushroom e-stop (NC, latching: TRUE healthy, FALSE when pressed)",
+      "activeLow": true,
+      "fioKind": "Input"
+    },
+    {
+      "name": "Auto",
+      "role": "sensor",
+      "dataType": "BOOL",
+      "plcAddress": "%QX14.0",
+      "kind": "selector",
+      "description": "Auto position of the Auto/Manual selector (rests on Manual)",
+      "activeLow": false,
+      "fioKind": "Input"
+    },
+    {
+      "name": "Conveyor entry",
+      "role": "actuator",
+      "dataType": "BOOL",
+      "plcAddress": "%QX0.0",
+      "kind": "conveyor",
+      "description": "entry belt conveyor motor",
+      "activeLow": false,
+      "fioKind": "Output"
+    },
+    {
+      "name": "Load",
+      "role": "actuator",
+      "dataType": "BOOL",
+      "plcAddress": "%QX0.1",
+      "kind": "chain_transfer",
+      "description": "chain transfer rollers: load a box from the entry conveyor",
+      "activeLow": false,
+      "fioKind": "Output"
+    },
+    {
+      "name": "Unload",
+      "role": "actuator",
+      "dataType": "BOOL",
+      "plcAddress": "%QX0.2",
+      "kind": "chain_transfer",
+      "description": "chain transfer rollers: unload",
+      "activeLow": false,
+      "fioKind": "Output"
+    },
+    {
+      "name": "Transf. left",
+      "role": "actuator",
+      "dataType": "BOOL",
+      "plcAddress": "%QX0.3",
+      "kind": "chain_transfer",
+      "description": "chain transfer moves the box to the left lane",
+      "activeLow": false,
+      "fioKind": "Output"
+    },
+    {
+      "name": "Transf. right",
+      "role": "actuator",
+      "dataType": "BOOL",
+      "plcAddress": "%QX0.4",
+      "kind": "chain_transfer",
+      "description": "chain transfer moves the box to the right lane",
+      "activeLow": false,
+      "fioKind": "Output"
+    },
+    {
+      "name": "Conveyor left",
+      "role": "actuator",
+      "dataType": "BOOL",
+      "plcAddress": "%QX0.5",
+      "kind": "conveyor",
+      "description": "left exit conveyor motor",
+      "activeLow": false,
+      "fioKind": "Output"
+    },
+    {
+      "name": "Conveyor right",
+      "role": "actuator",
+      "dataType": "BOOL",
+      "plcAddress": "%QX0.6",
+      "kind": "conveyor",
+      "description": "right exit conveyor motor",
+      "activeLow": false,
+      "fioKind": "Output"
+    },
+    {
+      "name": "Start light",
+      "role": "actuator",
+      "dataType": "BOOL",
+      "plcAddress": "%QX0.7",
+      "kind": "light",
+      "description": "green panel light",
+      "activeLow": false,
+      "fioKind": "Output"
+    },
+    {
+      "name": "Reset light",
+      "role": "actuator",
+      "dataType": "BOOL",
+      "plcAddress": "%QX1.0",
+      "kind": "light",
+      "description": "yellow panel light",
+      "activeLow": false,
+      "fioKind": "Output"
+    },
+    {
+      "name": "Stop light",
+      "role": "actuator",
+      "dataType": "BOOL",
+      "plcAddress": "%QX1.1",
+      "kind": "light",
+      "description": "red panel light (usable as fault lamp)",
+      "activeLow": false,
+      "fioKind": "Output"
+    },
+    {
+      "name": "Counter",
+      "role": "actuator",
+      "dataType": "INT",
+      "plcAddress": "%QW0",
+      "kind": "counter_display",
+      "description": "panel digital display (holding register 0)",
+      "activeLow": false,
+      "fioKind": "Output"
+    }
   ],
   "faults": [
-    { "id": "pallet-sensor-stuck-on", "title": "Pallet sensor stuck ON", "kind": "stuck_on", "tag": "Pallet sensor", "value": true, "description": "A box (or a dirty lens) keeps the pallet sensor active: a jam at the transfer." },
-    { "id": "left-exit-blocked", "title": "Left exit eye blocked", "kind": "stuck_on", "tag": "At left exit", "value": false, "description": "Retroreflective eye reads blocked (FALSE) permanently: a jammed box at the left exit." },
-    { "id": "high-sensor-stuck-on", "title": "High sensor stuck ON", "kind": "stuck_on", "tag": "High sensor", "value": true, "description": "Every box looks tall: mis-sorting." },
-    { "id": "loaded-stuck-off", "title": "Loaded sensor dead", "kind": "stuck_off", "tag": "Loaded", "value": false, "description": "The transfer never reports a box: the sequence stalls." }
+    {
+      "id": "pallet-sensor-stuck-on",
+      "title": "Pallet sensor stuck ON",
+      "kind": "stuck_on",
+      "tag": "Pallet sensor",
+      "value": true,
+      "description": "A box (or a dirty lens) keeps the pallet sensor active: a jam at the transfer."
+    },
+    {
+      "id": "left-exit-blocked",
+      "title": "Left exit eye blocked",
+      "kind": "stuck_on",
+      "tag": "At left exit",
+      "value": false,
+      "description": "Retroreflective eye reads blocked (FALSE) permanently: a jammed box at the left exit."
+    },
+    {
+      "id": "high-sensor-stuck-on",
+      "title": "High sensor stuck ON",
+      "kind": "stuck_on",
+      "tag": "High sensor",
+      "value": true,
+      "description": "Every box looks tall: mis-sorting."
+    },
+    {
+      "id": "loaded-stuck-off",
+      "title": "Loaded sensor dead",
+      "kind": "stuck_off",
+      "tag": "Loaded",
+      "value": false,
+      "description": "The transfer never reports a box: the sequence stalls."
+    }
   ],
   "setup": {
     "beforeTests": [
-      { "op": "pulse", "tag": "FACTORY I/O (Reset)", "kind": "Output", "ms": 600 },
-      { "op": "force", "tag": "Emitter", "kind": "Output", "value": false }
+      {
+        "op": "pulse",
+        "tag": "FACTORY I/O (Reset)",
+        "kind": "Output",
+        "ms": 600
+      },
+      {
+        "op": "force",
+        "tag": "Emitter",
+        "kind": "Output",
+        "value": false
+      },
+      {
+        "op": "force",
+        "tag": "Remover left",
+        "kind": "Output",
+        "value": true
+      },
+      {
+        "op": "force",
+        "tag": "Remover right",
+        "kind": "Output",
+        "value": true
+      }
     ],
     "afterTests": [
-      { "op": "force", "tag": "Emitter", "kind": "Output", "value": true }
+      {
+        "op": "force",
+        "tag": "Emitter",
+        "kind": "Output",
+        "value": true
+      }
     ]
   },
-  "timing": { "samplePeriodMs": 50, "settleMs": 1500 },
-  "verified": false
+  "timing": {
+    "samplePeriodMs": 50,
+    "settleMs": 1500
+  },
+  "verified": true,
+  "verifiedBy": "Developer 1, live rig I/O map (ENDPOINTS handoff 2026-10-11)"
 }

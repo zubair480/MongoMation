@@ -25,6 +25,7 @@
     "evolve": "tsx --env-file-if-exists=.env scripts/evolve.ts",
     "benchmark": "tsx --env-file-if-exists=.env scripts/evolve.ts --benchmark-only",
     "ablation": "tsx --env-file-if-exists=.env scripts/evolve.ts --ablation",
+    "rig:smoke": "tsx --env-file-if-exists=.env scripts/rig-smoke.ts",
     "ledger": "tsx --env-file-if-exists=.env scripts/evidence-ledger.ts",
     "export": "tsx --env-file-if-exists=.env scripts/export-project.ts",
     "probe": "tsx scripts/gen-probe.ts"

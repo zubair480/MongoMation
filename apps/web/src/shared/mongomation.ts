@@ -420,6 +420,31 @@ export interface RsiData {
   proposalCount: number;
 }
 
+/** One condition of the newest ablation run (bare one-shot / harness v0 / evolved vN). */
+export interface AblationConditionLite {
+  /** Key in the summary row: "bare", "v0", "v3"... */
+  key: string;
+  /** Harness version for vN keys (undefined for "bare"). */
+  version?: number;
+  scores?: HarnessScoresLite;
+  /** Per-case rows stored in benchmark_runs for this condition and run. */
+  rows: number;
+}
+
+export interface AblationData {
+  /** Newest `kind: "ablation_summary"` row, or null when no ablation has finished. */
+  summary: {
+    benchmarkId: string;
+    manifestHash?: string;
+    createdAt?: Date;
+    model?: { fast?: string; strong?: string };
+    conditions: AblationConditionLite[];
+  } | null;
+  /** Newest ablation case rows whose run has no summary yet (a run still going, or one that stopped). */
+  inProgress: { benchmarkId: string; rows: number; lastRowAt?: Date } | null;
+  summaryCount: number;
+}
+
 // ------------------------------------------------------------------------------------------------
 // Pipeline stages
 // ------------------------------------------------------------------------------------------------

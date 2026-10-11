@@ -1,5 +1,5 @@
 import { Module } from 'modelence/server';
-import { dashboard, plcSource, project, rsi, scenes, testTimeline } from './queries';
+import { ablation, dashboard, plcSource, project, rsi, scenes, testTimeline } from './queries';
 import { changeSpec, generate, injectFaultAndImprove, interruptWorker, resumeWorker, runExample } from './mutations';
 
 // No `stores`: worker-owned collections are read through a dedicated MongoClient (./atlas.ts) so that
@@ -20,6 +20,7 @@ const mongomationModule = new Module('mongomation', {
     plcSource,
     testTimeline,
     rsi,
+    ablation,
   },
 
   // Signed-in users only; each inserts one document into `jobs`.

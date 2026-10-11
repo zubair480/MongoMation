@@ -7,6 +7,7 @@ import {
   POLL_FAST_MS,
   POLL_MS,
   POLL_SLOW_MS,
+  type AblationData,
   type DashboardData,
   type Envelope,
   type PlcSourceData,
@@ -87,6 +88,15 @@ export function useRsi() {
     queryKey: ['mongomation.rsi'],
     queryFn: read<RsiData>('rsi'),
     refetchInterval: POLL_MS,
+    retry: 1,
+  });
+}
+
+export function useAblation() {
+  return useQuery({
+    queryKey: ['mongomation.ablation'],
+    queryFn: read<AblationData>('ablation'),
+    refetchInterval: POLL_SLOW_MS,
     retry: 1,
   });
 }

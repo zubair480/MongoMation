@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { FileCode2, GitCompareArrows } from 'lucide-react';
+import { Download, FileCode2, GitCompareArrows } from 'lucide-react';
+import { downloadText, fileSlug } from '@/client/lib/download';
 import type { PlcVersionMeta } from '@/shared/mongomation';
 import { usePlcSource } from '@/client/lib/api';
 import { cn } from '@/client/lib/utils';
@@ -161,6 +162,17 @@ export function PlcProgram({ versions }: { versions: PlcVersionMeta[] }) {
             <GitCompareArrows className="size-3.5" aria-hidden /> Diff{previous ? ` vs v${previous.version}` : ''}
           </button>
         </div>
+        <button
+          type="button"
+          disabled={!data?.connected || !data.found || !data.source}
+          onClick={() => {
+            if (data?.connected && data.source) downloadText(`plc-v${current.version ?? fileSlug(current.id)}.st`, data.source);
+          }}
+          title="Download Structured Text source (.st)"
+          className="inline-flex items-center gap-1 rounded-md border border-plant-600 px-2 py-1 text-[11.5px] text-plant-300 hover:bg-plant-800 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Download className="size-3.5" aria-hidden /> .st
+        </button>
       </div>
       {current.sourceHash && (
         <div className="flex items-center gap-2 font-mono text-[10.5px] text-plant-500">

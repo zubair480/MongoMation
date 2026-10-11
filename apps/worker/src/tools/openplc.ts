@@ -9,7 +9,10 @@
 //        /compile-program?file= → poll /compilation-logs → /start_plc.
 // JWTs live 15 minutes: every call re-logs-in once on 401.
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { promisify } from "node:util";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { SceneDefinition } from "@mongomation/types";
@@ -18,6 +21,17 @@ import { Agent } from "undici";
 import type { CompileOutcome, PlcRuntime, RuntimeStatus } from "./rig.ts";
 
 const COMPILE_TIMEOUT_MS = 5 * 60_000;
+const run = promisify(execFile);
+
+export interface V4Options {
+  /** "master": OpenPLC polls Factory I/O, so every bundle carries conf/modbus_master.json.
+   *  "server": Factory I/O is the Modbus client of OpenPLC's server, so the bundle must NOT carry it. */
+  modbusMode: "master" | "server";
+  /** "strucpp" (in-process npm build) or "docker:<image>" (the rig's own builder, e.g. docker:plc-builder). */
+  builder: string;
+  /** Factory I/O drops its Modbus link after every upload and reconnects by itself; wait this long after start. */
+  relinkMs: number;
+}
 
 // --------------------------------------------------------------------------------------------------------
 // v3 + v4 REST (JWT)
@@ -37,6 +51,7 @@ export class OpenPlcRest implements PlcRuntime {
     /** v4 only: scene + Factory I/O Modbus endpoint, to generate conf/modbus_master.json for every upload. */
     private readonly modbus?: { scene: () => SceneDefinition | null; host: string; port: number; slaveId: number },
     insecureTls = false,
+    private readonly v4: V4Options = { modbusMode: "master", builder: "strucpp", relinkMs: 0 },
   ) {
     this.label = `OpenPLC ${flavor} REST @ ${base}`;
     // The runtime ships a self-signed certificate. Inside the VPC you may skip verification explicitly.
@@ -84,8 +99,9 @@ export class OpenPlcRest implements PlcRuntime {
   }
 
   private async bundleV4(source: string): Promise<Uint8Array> {
+    if (this.v4.builder.startsWith("docker:")) return this.bundleWithDocker(source, this.v4.builder.slice("docker:".length));
     // STruC++ is not on the npm registry: npm i --ignore-scripts https://github.com/Autonomy-Logic/STruCpp/releases/download/v0.7.0/strucpp-0.7.0.tgz
-    const pkg = "strucpp";
+    const pkg = "strucpp/node"; // loadStlibFromFile is only exported from the node entry (0.7.0)
     const sc = (await import(pkg).catch(() => {
       throw new Error("STruC++ not installed (see docs/SETUP.md: npm i --ignore-scripts <strucpp-0.7.0.tgz>) — required for OpenPLC v4 uploads");
     })) as {
@@ -114,11 +130,29 @@ export class OpenPlcRest implements PlcRuntime {
     if (result.debugMap !== undefined) files["debug-map.json"] = strToU8(JSON.stringify(result.debugMap));
     const inc = join(root, "src", "runtime", "include");
     for (const f of readdirSync(inc)) files[`strucpp_runtime/include/${f}`] = readFileSync(join(inc, f));
-    // Every upload replaces the plugin config: without conf/modbus_master.json the PLC loses its Factory I/O link.
+    if (this.v4.modbusMode === "server") return zipSync(files);
+    // Master mode: every upload replaces the plugin config; without conf/modbus_master.json the PLC loses its Factory I/O link.
     const scene = this.modbus?.scene();
     if (!scene || !this.modbus) throw new Error("v4 upload needs the scene + FACTORYIO_MODBUS_HOST to generate conf/modbus_master.json");
     files["conf/modbus_master.json"] = strToU8(JSON.stringify(modbusMasterConfig(scene, this.modbus), null, 2));
     return zipSync(files);
+  }
+
+  /** Builds program.zip with the rig's own builder image (docker run --rm -v dir:/work <image> /work/main.st /work/out). */
+  private async bundleWithDocker(source: string, image: string): Promise<Uint8Array> {
+    const dir = mkdtempSync(join(tmpdir(), "mm-plc-"));
+    try {
+      writeFileSync(join(dir, "main.st"), source);
+      try {
+        await run("docker", ["run", "--rm", "-v", `${dir}:/work`, image, "/work/main.st", "/work/out"], { timeout: 180_000, maxBuffer: 8 << 20 });
+      } catch (err) {
+        const e = err as { stdout?: string; stderr?: string; message: string };
+        throw new CompileRejected(`${image}: ${(e.stderr || e.stdout || e.message).slice(-4000)}`);
+      }
+      return new Uint8Array(readFileSync(join(dir, "out", "program.zip")));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 
   async compile(source: string, programName: string): Promise<CompileOutcome> {
@@ -175,10 +209,12 @@ export class OpenPlcRest implements PlcRuntime {
     const until = Date.now() + 10_000;
     for (;;) {
       const s = await this.status();
-      if (s.running) return;
+      if (s.running) break;
       if (/EMPTY|ERROR/.test(s.detail) || Date.now() > until) throw new Error(`PLC did not reach RUNNING: ${s.detail}`);
       await sleep(200);
     }
+    // The rig's Factory I/O reconnects its Modbus client ~60 s after an upload; measuring earlier would grade a dead link.
+    if (this.v4.relinkMs > 0) await sleep(this.v4.relinkMs);
   }
 
   async stop() {

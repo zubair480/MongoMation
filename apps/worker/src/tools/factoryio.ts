@@ -78,7 +78,7 @@ export class FactoryIoWebApi implements Simulator {
   }
 
   private async refreshIndex() {
-    const tags = await this.call<FioTag[]>("GET", "/api/tags");
+    const tags = (await this.call<FioTag[]>("GET", "/api/tags")).map((t) => ({ ...t, kind: (String(t.kind).charAt(0).toUpperCase() + String(t.kind).slice(1).toLowerCase()) as FioTag["kind"] }));
     this.index = new Map(tags.map((t) => [`${t.kind}:${t.name}`, t]));
     return tags;
   }

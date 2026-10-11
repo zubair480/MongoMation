@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { getConfig } from 'modelence/server';
 import type { Db, Document } from 'mongodb';
 import type {
+  AblationConditionLite,
+  AblationData,
   DashboardData,
   JobLite,
   PlcSourceData,
@@ -19,6 +21,7 @@ import { withAtlas } from './atlas';
 import { cached } from './cache';
 import {
   clip,
+  date,
   idFilter,
   idOf,
   num,
@@ -43,6 +46,7 @@ import {
   toRequirement,
   toRig,
   toScene,
+  toScores,
   toSimRun,
   toStage,
   toTest,
@@ -489,6 +493,72 @@ export async function rsi() {
         candidate: candidateDoc ? toHarnessDetail(candidateDoc) : null,
         proposalCount,
       };
+    }),
+  );
+}
+
+// ---- ablation: bare one-shot vs harness v0 vs evolved vN on the held-out split --------------------------
+
+const CONDITION_ORDER = (key: string) => (key === 'bare' ? -2 : key === 'v0' ? -1 : (Number(key.slice(1)) || 0));
+
+export async function ablation() {
+  return cached('ablation', () =>
+    withAtlas<AblationData>(async (db) => {
+      const runs = db.collection('benchmark_runs');
+      const ABLATION_ROW = { condition: { $regex: '^ablation:' } };
+      const [summaryDoc, summaryCount, newestRow] = await Promise.all([
+        runs.find({ kind: 'ablation_summary' }).sort({ createdAt: -1, _id: -1 }).limit(1).next(),
+        runs.countDocuments({ kind: 'ablation_summary' }),
+        runs
+          .find(ABLATION_ROW, { projection: { _id: 0, benchmarkId: 1, createdAt: 1 } })
+          .sort({ createdAt: -1, _id: -1 })
+          .limit(1)
+          .next(),
+      ]);
+
+      let summary: AblationData['summary'] = null;
+      const summaryId = summaryDoc ? str(summaryDoc.benchmarkId) : undefined;
+      if (summaryDoc && summaryId) {
+        const counts = await runs
+          .aggregate<{ _id: unknown; n: number }>([
+            { $match: { benchmarkId: summaryId, ...ABLATION_ROW } },
+            { $group: { _id: '$condition', n: { $sum: 1 } } },
+          ])
+          .toArray();
+        const rowsBy = new Map(counts.map((c) => [String(c._id).replace(/^ablation:/, ''), c.n]));
+        const scores = obj(summaryDoc.scores) ?? {};
+        const conditions: AblationConditionLite[] = Object.keys(scores)
+          .map((key) => ({
+            key,
+            version: key === 'bare' ? undefined : num(Number(key.replace(/^v/, ''))),
+            scores: toScores(scores[key]),
+            rows: rowsBy.get(key) ?? 0,
+          }))
+          .sort((a, b) => CONDITION_ORDER(a.key) - CONDITION_ORDER(b.key));
+        const model = obj(summaryDoc.model);
+        summary = {
+          benchmarkId: summaryId,
+          manifestHash: str(summaryDoc.manifestHash),
+          createdAt: date(summaryDoc.createdAt),
+          model: model ? { fast: str(model.fast), strong: str(model.strong) } : undefined,
+          conditions,
+        };
+      }
+
+      let inProgress: AblationData['inProgress'] = null;
+      const newestId = newestRow ? str(newestRow.benchmarkId) : undefined;
+      if (newestId && newestId !== summaryId) {
+        const done = await runs.countDocuments({ kind: 'ablation_summary', benchmarkId: newestId });
+        if (!done) {
+          inProgress = {
+            benchmarkId: newestId,
+            rows: await runs.countDocuments({ benchmarkId: newestId, ...ABLATION_ROW }),
+            lastRowAt: date(newestRow?.createdAt),
+          };
+        }
+      }
+
+      return { summary, inProgress, summaryCount };
     }),
   );
 }

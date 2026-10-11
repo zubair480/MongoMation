@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useSearchParams } from 'react-router';
 import { useSession } from 'modelence/client';
-import { receivedAtOf, useDashboard, useProject, useRsi, useScenes } from '@/client/lib/api';
+import { receivedAtOf, useAblation, useDashboard, useProject, useRsi, useScenes } from '@/client/lib/api';
 import { Seo } from '@/client/components/Seo';
 import { HeaderBar } from '@/client/components/mm/HeaderBar';
 import { SpecConsole } from '@/client/components/mm/SpecConsole';
@@ -10,6 +10,7 @@ import { SimulationPanel } from '@/client/components/mm/SimulationPanel';
 import { ExecutionPanel } from '@/client/components/mm/ExecutionPanel';
 import { ResultsCard } from '@/client/components/mm/ResultsCard';
 import { RsiCard } from '@/client/components/mm/RsiCard';
+import { AblationCard } from '@/client/components/mm/AblationCard';
 import { LongHorizonCard } from '@/client/components/mm/LongHorizonCard';
 import { DisconnectedNotice, EmptyState, Loading, ServerUnreachable } from '@/client/components/mm/ui';
 import type { Envelope } from '@/shared/mongomation';
@@ -30,6 +31,7 @@ export default function DashboardPage() {
   const dashboardQ = useDashboard();
   const scenesQ = useScenes();
   const rsiQ = useRsi();
+  const ablationQ = useAblation();
 
   const dash = dashboardQ.data?.connected ? dashboardQ.data : null;
   const dashReceivedAt = receivedAtOf(dashboardQ);
@@ -73,6 +75,7 @@ export default function DashboardPage() {
   const dashPlaceholder = placeholderFor(dashboardQ, 'dashboard');
   const projectPlaceholder = selectedProjectId ? placeholderFor(projectQ, 'project') : dashPlaceholder;
   const rsiPlaceholder = placeholderFor(rsiQ, 'harness versions');
+  const ablationPlaceholder = placeholderFor(ablationQ, 'ablation results');
 
   return (
     <div className="min-h-screen bg-blueprint text-plant-100">
@@ -140,6 +143,7 @@ export default function DashboardPage() {
                 (selectedProjectId ? undefined : <EmptyState>No runs yet · results appear after the first engineering run</EmptyState>)}
             </ResultsCard>
             <RsiCard data={rsiQ.data?.connected ? rsiQ.data : null}>{rsiPlaceholder ?? undefined}</RsiCard>
+            <AblationCard data={ablationQ.data?.connected ? ablationQ.data : null}>{ablationPlaceholder ?? undefined}</AblationCard>
             <LongHorizonCard dash={dash} receivedAt={dashReceivedAt} signedIn={!!user}>
               {dashPlaceholder ?? undefined}
             </LongHorizonCard>
