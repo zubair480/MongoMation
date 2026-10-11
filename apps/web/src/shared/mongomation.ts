@@ -401,6 +401,8 @@ export interface HarnessVersionLite {
   decidedAt?: Date;
   rulesCount: number;
   hasScores: boolean;
+  /** Set when this version is an operator restore (copy) of an earlier version. */
+  restoredFrom?: number;
 }
 
 export interface HarnessDetail extends HarnessVersionLite {
@@ -425,10 +427,25 @@ export interface ProposalLite {
   verdict?: string;
   benchmarkIds: string[];
   provenance?: string;
+  jobId?: string;
+  trigger?: string;
+  evidence?: {
+    harnessVersion?: number;
+    projects?: number;
+    requirementSatisfaction?: number;
+    clusters: { pattern: string; count: number; projects?: number; runIds: string[]; raindropEvents: number }[];
+    raindrop?: { source?: string; windowDays?: number; totalEvents?: number; signals: { name: string; sentiment?: string; events: number }[] };
+  };
 }
 
 export interface RsiData {
   active: HarnessDetail | null;
+  /** Rules diff of the active version vs its parent ("+ " / "- " lines); [] when the rules are identical. */
+  activeRuleDiff?: string[];
+  /** sim_run id → project id for the latest proposal's cited runs (only those resolvable). */
+  citedRunProjects?: Record<string, string>;
+  /** Newest first, up to 5. */
+  recentProposals?: { id: string; createdAt?: Date; verdict?: string; fromVersion?: number; summary?: string }[];
   /** Newest first. */
   versions: HarnessVersionLite[];
   latestProposal: ProposalLite | null;

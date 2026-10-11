@@ -73,6 +73,7 @@ Rules:
   the cause is absent; gate all outputs with NOT fault."
 - Rules must be general (no tag names, no project-specific numbers) and must never weaken, skip, or reinterpret tests,
   compilation, or error reporting. Never mention benchmarks, held-out sets, or hidden tests.
+- Each rule string MUST be at most 400 characters (hard schema limit; longer rules are rejected). State one precise rule.
 - Existing rules must be kept (append only). Repair budget may change by at most 1.
 - cite the run ids that show the pattern in citedRunIds.
 - Raindrop telemetry (signal counts, failing spans, failure samples) tells you how often a failure kind occurs across
