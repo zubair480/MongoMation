@@ -1,5 +1,5 @@
 // factory3d.js — daylit 3D model of the "Sorting by Height (Basic)" line.
-// API: createFactory(host, opts) -> { setShot, focusTag, setIO, pulse, setLabels, dispose }
+// API: createFactory(host, opts) -> { setShot, focusTag, setIO, applyPlant, clearPlant, pulse, setLabels, dispose }
 // opts: reducedMotion, offset (0..1 multiplier for the left-UI projection shift, default 1),
 //       quality ('high' | 'low' — low caps pixel ratio + shadow map for integrated GPUs), labels ('auto'|'all'|'none')
 import * as THREE from 'three';
@@ -180,18 +180,27 @@ export function createFactory(host, opts = {}) {
   [-0.5, 0.5].forEach(x => { const c = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.05, 2.0), M.ink); c.position.set(x, 0.8, 0); xfer.add(c); chains.push(c); });
   shadowAll(xfer); scene.add(xfer); reveal(xfer, 0.55);
 
-  // height gate frame at x=-4
-  const gate = new THREE.Group(); gate.position.set(-4, 0, 0);
+  // height gate frame: the real sorter measures height at the end-stop (Pallet AND Low), so it sits beside the Pallet sensor.
+  // Default x=-1.7; the plant-sim can move it with state.geometry.heightGateX (see setHeightGateX).
+  const GATE_X0 = typeof opts.heightGateX === 'number' ? opts.heightGateX : -1.7;
+  const gate = new THREE.Group(); gate.position.set(GATE_X0, 0, 0);
   [-1, 1].forEach(s => { const p = new THREE.Mesh(new THREE.BoxGeometry(0.1, 2.0, 0.1), M.aluDark); p.position.set(0, 1.0, s * 0.95); gate.add(p); });
   const top = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.1, 2.0), M.aluDark); top.position.set(0, 2.0, 0); gate.add(top);
   shadowAll(gate); scene.add(gate); reveal(gate, 0.75);
 
   // sensors (positions match index.html sim coordinates)
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
-  sensor('Low sensor', '%QX12.5', V(-4, 1.12, -0.95), V(0, 0, 1), 1.9);
-  sensor('High sensor', '%QX12.6'.replace('12.6', '12.4'), V(-4, 1.62, -0.95), V(0, 0, 1), 1.9);
-  sensor('Pallet sensor', '%QX12.6', V(-1.7, 1.12, -0.95), V(0, 0, 1), 1.9);
+  sensor('Low sensor', '%QX12.5', V(GATE_X0, 1.12, -0.95), V(0, 0, 1), 1.9);
+  sensor('High sensor', '%QX12.6'.replace('12.6', '12.4'), V(GATE_X0, 1.62, -0.95), V(0, 0, 1), 1.9);
+  // Pallet eye on the far rail, just downstream of the gate posts, so the two never overlap
+  sensor('Pallet sensor', '%QX12.6', V(GATE_X0 + 0.32, 1.0, 0.95), V(0, 0, -1), 1.9);
   sensor('Loaded', '%QX12.7', V(1.25, 1.1, 0), V(-1, 0, 0), 2.4);
+  let gateX = GATE_X0;
+  function setHeightGateX(x) { // move the gate frame + Low/High eyes (+ the Pallet eye beside them) along the entry belt
+    if (typeof x !== 'number' || !isFinite(x) || Math.abs(x - gateX) < 1e-3) return;
+    const dx = x - gateX; gateX = x; gate.position.x += dx;
+    ['Low sensor', 'High sensor', 'Pallet sensor'].forEach(n => { const o = tagObj[n]; o.pos.x += dx; o.group.position.x += dx; o.beam.position.x += dx; });
+  }
   sensor('At left entry', '%QX13.0', V(-0.95, 1.12, -2), V(1, 0, 0), 1.9);
   sensor('At left exit', '%QX13.1', V(-0.95, 1.12, -6.5), V(1, 0, 0), 1.9);
   sensor('At right entry', '%QX13.2', V(-0.95, 1.12, 2), V(1, 0, 0), 1.9);
@@ -263,8 +272,10 @@ export function createFactory(host, opts = {}) {
   }
 
   // ---------- IO state ----------
-  let io = { tags: {}, boxes: [], running: true, fault: false };
-  let localSim = true, simT = 0, nid = 1;
+  // Idle until real data arrives: no boxes, no tags. setIO() (rig tags) is the only driver unless
+  // opts.localSim is explicitly true (standalone demo), which runs a random local box simulation.
+  let io = { tags: {}, boxes: [], running: false, fault: false };
+  let localSim = opts.localSim === true, simT = 0, nid = 1, idleApplied = false;
   const localBoxes = [];
   function stepLocal(dt) { // used only when index.html isn't feeding setIO (scene-demo)
     simT += dt;
@@ -277,14 +288,13 @@ export function createFactory(host, opts = {}) {
     for (let i = localBoxes.length - 1; i >= 0; i--) if (localBoxes[i].seg === 'gone') localBoxes.splice(i, 1);
     const near = (seg, k, v) => localBoxes.some(b => b.seg === seg && Math.abs(b[k] - v) < .35);
     io = { running: true, fault: false, boxes: localBoxes, tags: {
-      'Low sensor': near('entry', 'x', -4), 'High sensor': localBoxes.some(b => b.seg === 'entry' && b.tall && Math.abs(b.x + 4) < .35),
+      'Low sensor': near('entry', 'x', gateX), 'High sensor': localBoxes.some(b => b.seg === 'entry' && b.tall && Math.abs(b.x - gateX) < .35),
       'Pallet sensor': localBoxes.some(b => b.seg === 'entry' && b.x > -1.9), 'Loaded': localBoxes.some(b => b.seg === 'xfer'),
       'At left entry': !near('left', 'z', -2), 'At left exit': !near('left', 'z', -6.5), 'At right entry': !near('right', 'z', 2), 'At right exit': !near('right', 'z', 6.5),
       'Conveyor entry': true, 'Conveyor left': true, 'Conveyor right': true, 'Start light': true, 'Counter': nid - 1 } };
   }
 
   function applyIO() {
-    const t = io.tags || {};
     // boxes
     const seen = new Set();
     (io.boxes || []).forEach(b => {
@@ -295,6 +305,55 @@ export function createFactory(host, opts = {}) {
       seen.add(b.id);
     });
     for (const [id, m] of boxMeshes) if (!seen.has(id)) { scene.remove(m); boxMeshes.delete(id); }
+    applyTags();
+  }
+
+  // ---------- external plant state (server-side physics, ws plant-sim) ----------
+  // applyPlant(state) is fed ~20 Hz frames from the plant simulator. Boxes are drawn exactly at the server-given
+  // positions, interpolated between the two frames bracketing (now - PLANT_DELAY) so motion stays smooth at 60 fps.
+  // No local simulation ever runs in this mode.
+  const PLANT_DELAY = 110; // ms of render latency; ~2 frames at 20 Hz
+  let plantMode = false;
+  const plantFrames = []; // { at: performance.now(), boxes: Map(id -> box) }
+  let lastTagsKey = '';
+  function applyPlantState(state) {
+    const now = performance.now();
+    const boxes = new Map();
+    (state.boxes || []).forEach(b => boxes.set(b.id, b));
+    plantFrames.push({ at: now, boxes });
+    if (state.geometry && typeof state.geometry.heightGateX === 'number') setHeightGateX(state.geometry.heightGateX);
+    while (plantFrames.length > 2 && plantFrames[1].at < now - PLANT_DELAY - 400) plantFrames.shift();
+    if (plantFrames.length > 12) plantFrames.shift();
+    const t = state.tags || {};
+    const estop = t['Emergency stop'] === false; // NC: FALSE = pressed/tripped
+    io = { tags: t, boxes: [], running: !!t['Start light'], fault: estop || !!(state.plc && state.plc.connected === false) || !!state.error, forced: [] };
+    const key = JSON.stringify(t) + io.running + io.fault;
+    if (key !== lastTagsKey) { lastTagsKey = key; applyTags(); }
+  }
+  function stepPlant() {
+    if (!plantFrames.length) return;
+    const rt = performance.now() - PLANT_DELAY;
+    let a = plantFrames[0], b = plantFrames[plantFrames.length - 1];
+    for (let i = plantFrames.length - 1; i > 0; i--) {
+      if (plantFrames[i - 1].at <= rt) { a = plantFrames[i - 1]; b = plantFrames[i]; break; }
+    }
+    if (rt >= b.at) a = b; // past the newest frame: hold the latest positions (no extrapolation)
+    const k = a === b ? 1 : Math.max(0, Math.min(1, (rt - a.at) / (b.at - a.at)));
+    const seen = new Set();
+    for (const [id, nb] of b.boxes) {
+      const ob = a.boxes.get(id) || nb;
+      let m = boxMeshes.get(id);
+      if (!m) { m = boxMesh(!!nb.tall); m.scale.setScalar(reduced ? 1 : 0.01); scene.add(m); boxMeshes.set(id, m); }
+      m.userData.target = null; // plant mode positions directly, no easing
+      if (m.scale.x < 1) m.scale.setScalar(Math.min(1, m.scale.x + 0.05));
+      m.position.set(ob.x + (nb.x - ob.x) * k, 0.88, ob.z + (nb.z - ob.z) * k);
+      seen.add(id);
+    }
+    for (const [id, m] of boxMeshes) if (!seen.has(id)) { scene.remove(m); boxMeshes.delete(id); }
+  }
+
+  function applyTags() {
+    const t = io.tags || {};
     // sensors
     Object.entries(tagObj).forEach(([n, o]) => {
       const v = t[n];
@@ -349,6 +408,9 @@ export function createFactory(host, opts = {}) {
     } else { // monitor
       camGoal.set(13, 15, 15); lookGoal.set(-1.5, 0, 0);
     }
+    if ((shot === 'overview' || shot === 'monitor') && opts.shotScale) { // pull the wide shots closer (bigger stage)
+      camGoal.sub(lookGoal).multiplyScalar(opts.shotScale).add(lookGoal);
+    }
   }
   function updateLabels() {
     Object.entries(tagObj).forEach(([n, o]) => {
@@ -377,15 +439,17 @@ export function createFactory(host, opts = {}) {
   }
 
   // ---------- loop ----------
-  const clock = new THREE.Clock(); let revealT = reduced ? 99 : 0, raf = 0, hidden = false, paused = false;
-  if (!reduced) parts.forEach(p => { p.position.y = p.userData.reveal.y - 4; p.visible = false; });
+  const noReveal = reduced || opts.reveal === false; // reveal:false = machine is fully built from the first frame
+  const clock = new THREE.Clock(); let revealT = noReveal ? 99 : 0, raf = 0, hidden = false, paused = false;
+  if (!noReveal) parts.forEach(p => { p.position.y = p.userData.reveal.y - 4; p.visible = false; });
   function frame() {
     if (hidden || paused) { raf = 0; return; } // fully stop the loop while the tab is hidden; restarted by onVis
     raf = requestAnimationFrame(frame);
-    const dt = Math.min(0.05, clock.getDelta());
-    if (localSim) { stepLocal(dt); applyIO(); }
+    const rawDt = clock.getDelta(), dt = Math.min(0.05, rawDt);
+    if (plantMode) stepPlant();
+    else if (localSim) { stepLocal(dt); applyIO(); } else if (!idleApplied) { idleApplied = true; applyIO(); }
     // reveal
-    revealT += dt;
+    revealT += Math.min(0.5, rawDt); // wall-clock: the reveal always completes in ~2 s even at a low frame rate
     const gk = Math.min(1, revealT / 1.0); gridMinor.material.opacity = 0.9 * gk; gridMajor.material.opacity = gk;
     gridMinor.scale.setScalar(0.2 + 0.8 * (1 - Math.pow(1 - gk, 3))); gridMajor.scale.copy(gridMinor.scale);
     parts.forEach(p => {
@@ -455,8 +519,13 @@ export function createFactory(host, opts = {}) {
   const api = {
     setShot(name) { if (name !== shot) { shot = name; shotT = 0; focus = null; } },
     focusTag(name) { focus = tagObj[name] ? name : null; },
-    setIO(snap) { localSim = false; io = snap; applyIO(); },
+    setIO(snap) { localSim = false; plantMode = false; plantFrames.length = 0; idleApplied = true; io = snap; applyIO(); },
+    // external-state mode: render the server's plant (boxes + tags) exactly; never runs a local sim
+    applyPlant(state) { if (!state) return; localSim = false; idleApplied = true; plantMode = true; applyPlantState(state); },
+    // drop all boxes and frames (e.g. on disconnect) while staying in plant mode
+    clearPlant() { plantFrames.length = 0; for (const m of boxMeshes.values()) scene.remove(m); boxMeshes.clear(); },
     setLabels(mode) { labelMode = mode; },
+    setHeightGateX,
     // HMI build: 0..5 parts (process, sensors, actuators, panel, alarms) rise into place as they are bound
     setBuild(n) {
       n = Math.max(0, Math.min(5, n)); if (n === buildLevel) return;

@@ -27,12 +27,12 @@ export function TestsList({ p, click, sel, onSel, live }: { p: ProjectData; clic
   const done = p.tests.filter((t) => t.verdict).length;
   return (<>
     <div className="progress"><i style={{ width: `${p.tests.length ? (done / p.tests.length) * 100 : 0}%` }} /></div>
-    <div className="tests">{p.tests.length ? p.tests.map((t) => {
+    <div className="tests">{p.tests.length ? p.tests.map((t, idx) => {
       const s = t.verdict === 'passed' ? 'pass' : t.verdict === 'failed' || t.verdict === 'blocked' ? 'fail' : live ? 'run' : '';
       const c = click && t.visibility === 'public' && s !== 'run';
-      return (<div key={t.id} className={`test ${s} ${c ? 'click' : ''} ${click && sel === t.id ? 'sel' : ''}`} onClick={c ? () => onSel?.(t) : undefined}>
-        <span className="i">{s === 'pass' ? '✓' : s === 'fail' ? '✕' : ''}</span>
-        <span>{t.visibility === 'hidden' ? `🔒 ${t.title}` : <><span className="id">{t.testId}</span>{t.title}</>}{t.verdict === 'blocked' ? <span className="sf">blocked</span> : null}</span>
+      return (<div key={t.id} className={`test ${s} ${t.verdict === 'blocked' ? 'blk' : ''} ${c ? 'click' : ''} ${click && sel === t.id ? 'sel' : ''}`} style={{ '--i': idx } as React.CSSProperties} onClick={c ? () => onSel?.(t) : undefined}>
+        <span className="i">{s === 'pass' ? '✓' : t.verdict === 'blocked' ? '!' : s === 'fail' ? '✕' : ''}</span>
+        <span className="tt">{t.visibility === 'hidden' ? `🔒 ${t.title}` : <><span className="id">{t.testId}</span>{t.title}</>}{t.verdict === 'blocked' ? <span className="sf">blocked</span> : null}</span>
         <span className="rq">{t.requirementIds.join(' ')}</span></div>);
     }) : <div className="empty" style={{ padding: 24 }}>Tests run on the live simulator after deploy.</div>}</div>
     <Repair p={p} />
@@ -59,7 +59,7 @@ function Timeline({ test, live }: { test: TestLite; live: boolean }) {
     {Array.from({ length: 7 }, (_, i) => <g key={i}><line x1={x((T * i) / 6)} x2={x((T * i) / 6)} y1={Tp} y2={H - B} stroke="#ebe8e2" /><text x={x((T * i) / 6)} y={H - 6} fill="#9aa1a8" fontSize="10" fontFamily="var(--mono)" textAnchor="middle">{((T * i) / 6000).toFixed(1)}s</text></g>)}
     {keys.map((k, i) => <text key={k} x={L - 8} y={lane(i) + 19} fill="#67717b" fontSize="10" fontFamily="var(--mono)" textAnchor="end">{k.slice(0, 13)}</text>)}
     {keys.map((k, i) => <path key={k} d={path(k, i)} fill="none" stroke={colors[i]} strokeWidth="2.2" />)}
-    {!passed && failedAt != null ? <line x1={x(failedAt)} x2={x(failedAt)} y1={Tp} y2={H - B} stroke="#c0322b" strokeDasharray="3 3" /> : null}
+    {!passed && failedAt != null ? <line x1={x(failedAt)} x2={x(failedAt)} y1={Tp} y2={H - B} stroke="#D7261E" strokeDasharray="3 3" /> : null}
   </svg>
     {d.truncated ? <p className="hint">Showing change points of {d.totalSamples} samples (truncated).</p> : null}
     <div className="note" style={{ color: passed ? 'var(--go)' : 'var(--stop)' }}>{passed ? '✓' : '✕'} {note}</div></>);
@@ -73,11 +73,12 @@ export default function VerificationTab({ run, p }: { run: RunView; p: ProjectDa
   const reqTotal = p.verdicts.length || p.requirements?.items.length || 0;
   const repairs = p.plcVersions.filter((v) => v.createdBy === 'repair').length;
   const hidden = p.tests.filter((t) => t.visibility === 'hidden').length;
-  const sel = p.tests.find((t) => t.id === selId) ?? p.tests.find((t) => t.visibility === 'public' && t.verdict === 'failed') ?? p.tests.find((t) => t.visibility === 'public') ?? null;
+  const notPassed = p.testCounts.failed + p.testCounts.blocked;
+  const sel = p.tests.find((t) => t.id === selId) ?? p.tests.find((t) => t.visibility === 'public' && (t.verdict === 'failed' || t.verdict === 'blocked')) ?? p.tests.find((t) => t.visibility === 'public') ?? null;
   return (<>
     <div className="metrics" style={{ marginBottom: 18 }}>
       <div className="metric"><div className="k">Passed</div><div className="v t-go">{p.testCounts.passed}</div><div className="s">of {p.testCounts.total} tests</div></div>
-      <div className="metric"><div className="k">Failed</div><div className={`v ${p.testCounts.failed ? 't-stop' : ''}`}>{p.testCounts.failed}</div><div className="s">{repairs ? `${repairs} self-repair${repairs > 1 ? 's' : ''}` : p.testCounts.blocked ? `${p.testCounts.blocked} blocked` : '—'}</div></div>
+      <div className="metric"><div className="k">{p.testCounts.blocked ? 'Failed / blocked' : 'Failed'}</div><div className={`v ${notPassed ? 't-stop' : ''}`}>{notPassed}</div><div className="s">{[p.testCounts.blocked ? `${p.testCounts.failed} failed · ${p.testCounts.blocked} blocked` : '', repairs ? `${repairs} self-repair${repairs > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ') || '—'}</div></div>
       <div className="metric"><div className="k">Hidden tests</div><div className="v">{hidden}</div><div className="s">never shown to the model</div></div>
       <div className="metric"><div className="k">Requirements</div><div className={`v ${ok === reqTotal && ok ? 't-go' : ''}`}>{ok} / {reqTotal}</div><div className="s">verified with evidence</div></div></div>
     <div className="grid2">
@@ -86,7 +87,7 @@ export default function VerificationTab({ run, p }: { run: RunView; p: ProjectDa
           const v = p.verdicts.find((x) => x.requirementId === r.id), s = v?.status;
           const testIds = v?.testIds.length ? v.testIds : p.tests.filter((t) => t.requirementIds.includes(r.id)).map((t) => t.testId ?? 'hidden');
           const testing = !s && p.tests.some((t) => t.requirementIds.includes(r.id) && !t.verdict) && live;
-          return <tr key={r.id}><td className="m">{r.id}{isSafety(r.kind, r.text) ? <><br /><span className="sf" style={{ margin: '4px 0 0' }}>safety</span></> : null}</td><td>{r.text}</td><td className="m">{testIds.join(' ')}</td>
+          return <tr key={r.id}><td className="m"><span className="idst">{r.id}</span>{isSafety(r.kind, r.text) ? <><br /><span className="sf" style={{ margin: '4px 0 0' }}>safety</span></> : null}</td><td>{r.text}</td><td className="m">{testIds.join(' ')}</td>
             <td style={{ textAlign: 'right' }}>{isOk(s) ? <span className="pill go"><i />verified</span> : s === 'violated' || s === 'failed' ? <span className="pill stop"><i />failed</span> : s === 'blocked' ? <span className="pill ca"><i />blocked</span> : testing ? <span className="pill fl"><i />testing</span> : <span className="pill nt">untested</span>}</td></tr>;
         })}</tbody></table> : <div className="empty" style={{ border: 0 }}>No requirements recorded</div>}</div>
       <div className="stack">

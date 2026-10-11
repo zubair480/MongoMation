@@ -8,18 +8,32 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // Collapse every static mesh under `root` into one mesh per material (huge draw-call saving on integrated GPUs).
 // Meshes flagged userData.dynamic (or under a flagged parent) are left alone.
-export function mergeStatic(root) {
+// With { bake: true }, plain single-colour MeshStandardMaterials (no map, no emissive, opaque, front-sided) are
+// baked into a vertex-colour attribute and pooled by roughness/metalness, so dozens of colours share one draw call.
+// Materials that are animated must have an emissive colour or a map (they are then never baked).
+const bakeable = m => m && m.isMeshStandardMaterial && !m.isMeshPhysicalMaterial && !m.map && !m.transparent && !m.alphaTest && !m.polygonOffset
+  && m.side === THREE.FrontSide && m.emissive.getHex() === 0 && !m.vertexColors && !m.userData.noBake;
+const bakedMats = new Map();
+export function mergeStatic(root, { bake = false } = {}) {
   root.updateMatrixWorld(true);
   const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
   const buckets = new Map(), victims = [];
   root.traverse(o => {
-    if (!o.isMesh) return;
+    if (!o.isMesh || Array.isArray(o.material)) return;
     for (let p = o; p && p !== root.parent; p = p.parent) if (p.userData.dynamic) return;
     const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
     for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
     if (!g.attributes.uv) return;
     g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
-    const key = o.material.uuid; if (!buckets.has(key)) buckets.set(key, { m: o.material, gs: [], cast: false });
+    let m = o.material, key = m.uuid;
+    if (bake && bakeable(m)) {
+      const r = Math.round(m.roughness * 10) / 10, mt = Math.round(m.metalness * 10) / 10; key = `bake:${r}:${mt}`;
+      if (!bakedMats.has(key)) bakedMats.set(key, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: r, metalness: mt, vertexColors: true }));
+      const n = g.attributes.position.count, col = new Float32Array(n * 3), c = m.color;
+      for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
+      g.setAttribute('color', new THREE.BufferAttribute(col, 3)); m = bakedMats.get(key);
+    }
+    if (!buckets.has(key)) buckets.set(key, { m, gs: [], cast: false });
     const b = buckets.get(key); b.gs.push(g); b.cast ||= o.castShadow; victims.push(o);
   });
   victims.forEach(o => o.parent.remove(o));
@@ -27,7 +41,10 @@ export function mergeStatic(root) {
   return victims.length;
 }
 
-const std = (c, r = .6, m = 0, x = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m, ...x });
+const stdCache = new Map();
+const std = (c, r = .6, m = 0, x) => { // plain materials are shared; ones with extra options are always fresh (may be animated)
+  if (x) return new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m, ...x });
+  const k = `${c}:${r}:${m}`; if (!stdCache.has(k)) stdCache.set(k, new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m })); return stdCache.get(k); };
 function tex(w, h, draw) { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t; }
 
@@ -39,9 +56,9 @@ export function buildProps(scene, { backZ = -3.525, leftX = -5.225 } = {}) {
   const cyl = (rt, rb, h, m, x, y, z, parent = G, seg = 20) => { const o = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), m); o.position.set(x, y, z); parent.add(o); return o; };
   const M = {
     steel: std(0xb7bdc4, .35, .8), dark: std(0x26292e, .55, .2), black: std(0x121315, .5, .1), white: std(0xf7f7f5, .6),
-    wood: std(0xc9a77c, .7), red: std(0xd0281f, .45, .1), yellow: std(0xf2c230, .55), green: std(0x1f8a4c, .5),
-    rubber: std(0x2f3236, .95), conduit: std(0xcfd3d8, .35, .7), blue: std(0x2b5fc2, .5), orange: std(0xff5a1f, .5),
-    cable: std(0x1a1b1d, .7), glass: new THREE.MeshPhysicalMaterial({ color: 0xdfe8ee, roughness: .05, transmission: .6, transparent: true, opacity: .5 }),
+    wood: std(0xc9a77c, .7), red: std(0xd0281f, .45, .1), yellow: std(0xf2c230, .55), slate: std(0x4a4e55, .6),
+    rubber: std(0x2f3236, .95), conduit: std(0xcfd3d8, .35, .7), orange: std(0xff5a1f, .5),
+    cable: std(0x1a1b1d, .7), glass: std(0xdfe8ee, .05, .1, { transparent: true, opacity: .35, depthWrite: false }), // no transmission: it forces a 2nd full-scene pass
     cardboard: std(0xc29a6b, .85), chair: std(0x2d3035, .7), screenOff: std(0x0d0f12, .2, .3),
   };
   const glow = (c, i = 1.6) => std(c, .4, 0, { emissive: c, emissiveIntensity: i });
@@ -61,16 +78,14 @@ export function buildProps(scene, { backZ = -3.525, leftX = -5.225 } = {}) {
   const desk = new THREE.Group(); desk.position.set(-3.6, 0, BZ + .45); G.add(desk);
   box(1.9, .04, .8, M.white, 0, .74, 0, desk); [-.9, .9].forEach(x => box(.04, .72, .74, M.steel, x, .37, 0, desk));
   box(1.8, .3, .02, M.steel, 0, .55, -.38, desk);
-  const scadaTex = tex(512, 300, (g, w, h) => { g.fillStyle = '#f4f6f8'; g.fillRect(0, 0, w, h); g.fillStyle = '#0b0b0c'; g.font = '600 18px ui-monospace,monospace'; g.fillText('SORTING STATION · OVERVIEW', 16, 28);
+  // Desk screens are decor: a static line diagram and labels only, no invented counts, scores or events.
+  const scadaTex = tex(512, 300, (g, w, h) => { g.fillStyle = '#f4f6f8'; g.fillRect(0, 0, w, h); g.fillStyle = '#0b0b0c'; g.font = '600 18px ui-monospace,monospace'; g.fillText('SCADA · CAB-01', 16, 28);
     g.strokeStyle = '#3a3f46'; g.lineWidth = 10; g.beginPath(); g.moveTo(40, 160); g.lineTo(250, 160); g.moveTo(260, 60); g.lineTo(260, 260); g.stroke();
-    g.fillStyle = '#ff5a1f'; [[120, 150], [200, 150], [260, 110]].forEach(([x, y]) => g.fillRect(x, y, 16, 16)); g.fillStyle = '#1f8a4c'; g.beginPath(); g.arc(440, 60, 12, 0, 7); g.fill();
-    g.fillStyle = '#6b7079'; g.font = '14px ui-monospace,monospace'; ['Conveyor entry  RUN', 'Boxes sorted  0142', 'Jam timer  0.0 s'].forEach((s, i) => g.fillText(s, 320, 120 + i * 26)); });
+    g.fillStyle = '#6b7079'; g.font = '14px ui-monospace,monospace'; ['Entry conveyor', 'Transfer', 'Left / right exit'].forEach((s, i) => g.fillText(s, 320, 120 + i * 26)); });
   const trendTex = tex(512, 300, (g, w, h) => { g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h); g.strokeStyle = '#e7e7e9'; for (let i = 0; i < 8; i++) { g.beginPath(); g.moveTo(0, 40 + i * 32); g.lineTo(w, 40 + i * 32); g.stroke(); }
-    g.fillStyle = '#0b0b0c'; g.font = '600 18px ui-monospace,monospace'; g.fillText('HARNESS SCORE · v0 → v4', 16, 28);
-    g.strokeStyle = '#ff5a1f'; g.lineWidth = 3; g.beginPath(); [60, 75, 72, 110, 150, 170, 210, 236].forEach((v, i) => g.lineTo(30 + i * 64, 280 - v)); g.stroke(); });
-  const alarmTex = tex(512, 300, (g, w, h) => { g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h); g.fillStyle = '#0b0b0c'; g.font = '600 18px ui-monospace,monospace'; g.fillText('ALARMS · EVENTS', 16, 28); g.font = '14px ui-monospace,monospace';
-    [['11:09:12', 'CAB-01 verification running', '#ff5a1f'], ['11:07:42', 'v3 repair compiled OK', '#0b0b0c'], ['11:02:10', 'CAB-02 jam latched', '#d0281f'], ['10:58:31', 'Rig FIO reachable', '#0b0b0c'], ['10:48:02', 'v1 tests 6/8 passed', '#6b7079']]
-      .forEach(([t, s, c], i) => { g.fillStyle = c; g.fillRect(16, 52 + i * 44, 6, 26); g.fillStyle = '#6b7079'; g.fillText(t, 32, 70 + i * 44); g.fillStyle = '#0b0b0c'; g.fillText(s, 120, 70 + i * 44); }); });
+    g.fillStyle = '#0b0b0c'; g.font = '600 18px ui-monospace,monospace'; g.fillText('TRENDS', 16, 28); g.fillStyle = '#9aa3ad'; g.font = '14px ui-monospace,monospace'; g.fillText('open a PLC to see live data', 16, 160); });
+  const alarmTex = tex(512, 300, (g, w, h) => { g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h); g.fillStyle = '#0b0b0c'; g.font = '600 18px ui-monospace,monospace'; g.fillText('ALARMS · EVENTS', 16, 28);
+    g.fillStyle = '#9aa3ad'; g.font = '14px ui-monospace,monospace'; g.fillText('open a PLC to see live data', 16, 160); });
   [[-.62, trendTex, .25], [0, scadaTex, 0], [.62, alarmTex, -.25]].forEach(([x, t, ry]) => {
     const mon = new THREE.Group(); mon.position.set(x, 1.05, -.18); mon.rotation.y = ry; desk.add(mon);
     rbox(.58, .35, .03, .008, M.black, 0, 0, 0, mon);
@@ -91,22 +106,22 @@ export function buildProps(scene, { backZ = -3.525, leftX = -5.225 } = {}) {
   // ---------- 42U network / SCADA server rack ----------
   const rack = new THREE.Group(); rack.position.set(-1.6, 0, BZ + .4); G.add(rack);
   box(.6, 2.0, .7, M.dark, 0, 1.0, 0, rack); const rd = box(.56, 1.9, .01, M.glass, 0, 1.0, .355, rack);
-  const leds = [], ledMats = [0, 1, 2, 3].map(() => glow(0x2fb35a, 0)), fwMat = glow(0xff5a1f, 0);
+  const leds = [], ledMats = [0, 1, 2, 3].map(() => glow(0xdfe6ec, 0)), fwMat = glow(0xff5a1f, 0);
   [[.25, 'srv'], [.45, 'srv'], [.65, 'srv'], [1.25, 'sw'], [1.35, 'sw'], [1.5, 'patch'], [1.62, 'fw']].forEach(([y, k]) => {
     box(.5, k === 'srv' ? .17 : .08, .6, k === 'patch' ? M.black : std(0x3a3e45, .4, .3), 0, y, 0, rack);
     const n = k === 'sw' || k === 'patch' ? 16 : 3;
     for (let i = 0; i < n; i++) { const l = box(.012, .006, .004, k === 'fw' ? fwMat : ledMats[(i + leds.length) % 4], -.22 + i * (.44 / n), y + .02, .305, rack); leds.push(l); }
   });
-  for (let i = 0; i < 10; i++) { const c = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([new THREE.Vector3(-.2 + i * .04, 1.5, .31), new THREE.Vector3(-.2 + i * .045, 1.42, .34), new THREE.Vector3(-.22 + i * .05, 1.35, .31)]), 8, .004, 5), i % 3 ? M.blue : std(0xf2c230, .5)); rack.add(c); }
+  for (let i = 0; i < 10; i++) { const c = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([new THREE.Vector3(-.2 + i * .04, 1.5, .31), new THREE.Vector3(-.2 + i * .045, 1.42, .34), new THREE.Vector3(-.22 + i * .05, 1.35, .31)]), 8, .004, 5), i % 3 ? M.slate : std(0xc9ced4, .5)); rack.add(c); }
   anim.push(t => [...ledMats, fwMat].forEach((m, i) => m.emissiveIntensity = Math.sin(t * (4 + i * 1.3) + i * 1.7) > .3 ? 2.2 : .2));
 
   // ---------- UPS + battery cabinet ----------
   rbox(.45, 1.1, .7, .02, std(0x2b2e33, .5, .2), -.95, .55, BZ + .4);
-  const upsScreen = box(.16, .08, .01, glow(0x2fb35a, 1.2), -.95, .9, BZ + .755);
+  const upsScreen = box(.16, .08, .01, glow(0xeaf2f6, .9), -.95, .9, BZ + .755);
   box(.45, .08, .02, M.white, -.95, 1.02, BZ + .755);
 
   // ---------- whiteboard with ladder logic sketch ----------
-  const wbTex = tex(1024, 512, (g, w, h) => { g.fillStyle = '#fbfbfa'; g.fillRect(0, 0, w, h); g.strokeStyle = '#2b5fc2'; g.lineWidth = 4; g.font = '28px "Segoe Print", "Comic Sans MS", cursive'; g.fillStyle = '#2b5fc2';
+  const wbTex = tex(1024, 512, (g, w, h) => { g.fillStyle = '#fbfbfa'; g.fillRect(0, 0, w, h); g.strokeStyle = '#0b0b0c'; g.lineWidth = 4; g.font = '28px "Segoe Print", "Comic Sans MS", cursive'; g.fillStyle = '#0b0b0c';
     g.fillText('CAB-01 seal-in', 40, 52); g.beginPath(); g.moveTo(40, 80); g.lineTo(40, 460); g.moveTo(980, 80); g.lineTo(980, 460); g.stroke();
     [[130, 'Start', 'Stop', 'Run'], [250, 'Run', 'E-stop', ''], [370, 'Pallet', 'TON 5s', 'Jam']].forEach(([y, a, b, c]) => { g.beginPath(); g.moveTo(40, y); g.lineTo(980, y); g.stroke();
       g.clearRect(180, y - 22, 40, 44); g.strokeRect(180, y - 22, 14, 44); g.strokeRect(206, y - 22, 14, 44); g.fillText(a, 160, y - 30);
@@ -115,7 +130,7 @@ export function buildProps(scene, { backZ = -3.525, leftX = -5.225 } = {}) {
     g.strokeStyle = '#d0281f'; g.fillStyle = '#d0281f'; g.fillText('TODO: no auto-restart after reset!', 520, 470); });
   const wb = new THREE.Mesh(new THREE.PlaneGeometry(1.6, .8), new THREE.MeshStandardMaterial({ map: wbTex, roughness: .35 })); wb.position.set(.6, 1.65, BZ + .02); G.add(wb);
   box(1.66, .86, .015, M.steel, .6, 1.65, BZ + .008); box(1.5, .03, .06, M.steel, .6, 1.2, BZ + .04);
-  [0xd0281f, 0x2b5fc2, 0x0b0b0c].forEach((c, i) => { const mk = cyl(.008, .008, .1, std(c, .5), .3 + i * .05, 1.23, BZ + .05); mk.rotation.z = Math.PI / 2; });
+  [0xd0281f, 0x4a4e55, 0x0b0b0c].forEach((c, i) => { const mk = cyl(.008, .008, .1, std(c, .5), .3 + i * .05, 1.23, BZ + .05); mk.rotation.z = Math.PI / 2; });
 
   // ---------- wall clock ----------
   const clock = new THREE.Group(); clock.position.set(2.1, 2.3, BZ + .03); G.add(clock);
@@ -132,13 +147,13 @@ export function buildProps(scene, { backZ = -3.525, leftX = -5.225 } = {}) {
   sign(.5, .35, (g, w, h) => { g.fillStyle = '#ff7a00'; g.fillRect(0, 0, w, 90); g.fillStyle = '#000'; g.font = 'bold 64px Arial'; g.fillText('⚠ WARNING', 40, 70); g.fillStyle = '#fff'; g.fillRect(0, 90, w, h);
     g.fillStyle = '#000'; g.font = 'bold 40px Arial'; g.fillText('ARC FLASH AND SHOCK', 30, 160); g.font = '30px Arial'; g.fillText('HAZARD · PPE REQUIRED', 30, 210); g.fillText('480 VAC · 8 cal/cm²', 30, 255); g.fillText('Boundary 1.2 m', 30, 300); }, 2.95, 1.55, 0);
   sign(.45, .3, (g, w, h) => { g.fillStyle = '#c8102e'; g.fillRect(0, 0, w, 100); g.fillStyle = '#fff'; g.font = 'bold 68px Arial'; g.fillText('DANGER', 110, 78); g.fillStyle = '#fff'; g.fillRect(0, 100, w, h); g.fillStyle = '#000'; g.font = 'bold 44px Arial'; g.fillText('AUTHORIZED', 110, 190); g.fillText('PERSONNEL ONLY', 60, 250); }, -2.6, 1.7, 0);
-  sign(.6, .42, (g, w, h) => { g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.fillStyle = '#1f8a4c'; g.fillRect(0, 0, w, 70); g.fillStyle = '#fff'; g.font = 'bold 44px Arial'; g.fillText('PLC ROOM · AREA 3', 24, 52); g.fillStyle = '#000'; g.font = '30px Arial';
+  sign(.6, .42, (g, w, h) => { g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.fillStyle = '#0b0b0c'; g.fillRect(0, 0, w, 70); g.fillStyle = '#fff'; g.font = 'bold 44px Arial'; g.fillText('PLC ROOM · AREA 3', 24, 52); g.fillStyle = '#000'; g.font = '30px Arial';
     ['CAB-01..08  Line PLCs', 'MCC-A/B  Motor control', 'Rack R1  SCADA / network', 'Emergency: ext. 4444'].forEach((s, i) => g.fillText(s, 24, 120 + i * 44)); }, 4.1, 1.6, 0);
 
   // ---------- LOTO station ----------
   const loto = new THREE.Group(); loto.position.set(3.4, 1.35, BZ + .03); G.add(loto);
   box(.6, .5, .02, std(0xd0281f, .5), 0, 0, 0, loto); box(.56, .08, .01, M.white, 0, .2, .015, loto);
-  for (let i = 0; i < 6; i++) { const lk = rbox(.05, .06, .025, .006, std([0xd0281f, 0xf2c230, 0x2b5fc2][i % 3], .4), -.22 + i * .088, .02, .03, loto); const sh = new THREE.Mesh(new THREE.TorusGeometry(.017, .004, 6, 12, Math.PI), M.steel); sh.position.set(-.22 + i * .088, .055, .03); loto.add(sh); }
+  for (let i = 0; i < 6; i++) { const lk = rbox(.05, .06, .025, .006, std([0xd0281f, 0xf2c230, 0x0b0b0c][i % 3], .4), -.22 + i * .088, .02, .03, loto); const sh = new THREE.Mesh(new THREE.TorusGeometry(.017, .004, 6, 12, Math.PI), M.steel); sh.position.set(-.22 + i * .088, .055, .03); loto.add(sh); }
   for (let i = 0; i < 5; i++) box(.06, .1, .004, std(0xd0281f, .6), -.2 + i * .1, -.15, .02, loto);
 
   // ---------- fire extinguisher + eyewash ----------
@@ -163,11 +178,11 @@ export function buildProps(scene, { backZ = -3.525, leftX = -5.225 } = {}) {
   const exitFace = new THREE.Mesh(new THREE.PlaneGeometry(.36, .14), new THREE.MeshStandardMaterial({ map: exitTex, emissive: 0xffffff, emissiveMap: exitTex, emissiveIntensity: .9 })); exitFace.rotation.y = Math.PI / 2; exitFace.position.set(LX + .075, 2.35, 3.1); G.add(exitFace);
   const pull = rbox(.03, .14, .1, .01, M.red, LX + .02, 1.25, 2.35); const strobe = rbox(.04, .1, .12, .01, std(0xd0281f, .4, 0, { emissive: 0xffffff, emissiveIntensity: 0 }), LX + .025, 2.3, 2.35);
   strobe.userData.dynamic = true; anim.push(t => strobe.material.emissiveIntensity = (t % 6) < .06 ? 3 : 0);
-  rbox(.02, .12, .09, .01, M.white, LX + .02, 1.45, 1.6); box(.004, .04, .06, glow(0x6fb8ff, .8), LX + .035, 1.47, 1.6);
+  rbox(.02, .12, .09, .01, M.white, LX + .02, 1.45, 1.6); box(.004, .04, .06, glow(0xeaf2f6, .8), LX + .035, 1.47, 1.6);
   // mini-split AC head with fluttering louver
   const ac = new THREE.Group(); ac.position.set(LX + .14, 2.55, 0); G.add(ac);
   rbox(.25, .3, 1.0, .05, M.white, 0, 0, 0, ac); const louver = box(.02, .04, .9, std(0xe3e6ea, .5), .13, -.13, 0, ac); louver.userData.dynamic = true;
-  box(.004, .015, .03, glow(0x2fb35a, 1.2), .126, .08, .4, ac);
+  box(.004, .015, .03, glow(0xeaf2f6, 1.2), .126, .08, .4, ac);
   anim.push(t => louver.rotation.z = .35 + Math.sin(t * .8) * .25);
   const line = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([new THREE.Vector3(LX + .04, 2.45, .5), new THREE.Vector3(LX + .04, 2.8, .7), new THREE.Vector3(LX + .04, 3.1, .7)]), 10, .025, 6), M.white); G.add(line);
   // spare parts shelving (boxes of IO modules, contactors, cable)
@@ -175,13 +190,13 @@ export function buildProps(scene, { backZ = -3.525, leftX = -5.225 } = {}) {
   [-.75, .75].forEach(z => [-.25, .25].forEach(x => box(.03, 2.0, .03, M.steel, x, 1.0, z, shelf)));
   [.15, .6, 1.05, 1.5, 1.95].forEach(y => box(.55, .02, 1.55, M.steel, 0, y, 0, shelf));
   const rnd = (a, b) => a + Math.random() * (b - a);
-  [.16, .61, 1.06, 1.51].forEach(y => { let z = -.7; while (z < .65) { const d = rnd(.18, .34), h = rnd(.12, .32), c = Math.random() < .7 ? M.cardboard : std([0x2b5fc2, 0xf2c230, 0x3d4e60, 0xffffff][Math.floor(Math.random() * 4)], .6);
+  [.16, .61, 1.06, 1.51].forEach(y => { let z = -.7; while (z < .65) { const d = rnd(.18, .34), h = rnd(.12, .32), c = Math.random() < .7 ? M.cardboard : std([0xd5d9de, 0x8c939b, 0x4a4e55, 0xffffff][Math.floor(Math.random() * 4)], .6);
     box(rnd(.3, .45), h, d - .02, c, rnd(-.04, .04), y + h / 2 + .01, z + d / 2, shelf); z += d; } });
-  for (let i = 0; i < 2; i++) { const reel = new THREE.Mesh(new THREE.TorusGeometry(.12, .05, 10, 24), std(i ? 0x2b5fc2 : 0x121315, .6)); reel.rotation.y = Math.PI / 2; reel.position.set(.05, 2.1, -.4 + i * .5); shelf.add(reel); }
+  for (let i = 0; i < 2; i++) { const reel = new THREE.Mesh(new THREE.TorusGeometry(.12, .05, 10, 24), std(i ? 0x4a4e55 : 0x121315, .6)); reel.rotation.y = Math.PI / 2; reel.position.set(.05, 2.1, -.4 + i * .5); shelf.add(reel); }
   // eyewash
   const eye = new THREE.Group(); eye.position.set(LX + .12, 0, -3.0); G.add(eye);
-  cyl(.02, .02, 1.0, std(0x1f8a4c, .5), 0, .9, 0, eye); cyl(.12, .08, .06, std(0x1f8a4c, .5), .1, 1.05, 0, eye); box(.01, .2, .2, std(0x1f8a4c, .5), -.1, 1.7, 0, eye);
-  sign(.22, .3, (g, w, h) => { g.fillStyle = '#1f8a4c'; g.fillRect(0, 0, w, h); g.fillStyle = '#fff'; g.font = 'bold 56px Arial'; g.fillText('EMERGENCY', 60, 260); g.fillText('EYEWASH', 100, 340); }, 0, 1.75, -3.0, true);
+  cyl(.02, .02, 1.0, M.steel, 0, .9, 0, eye); cyl(.12, .08, .06, M.yellow, .1, 1.05, 0, eye); box(.01, .2, .2, M.white, -.1, 1.7, 0, eye);
+  sign(.22, .3, (g, w, h) => { g.fillStyle = '#0b0b0c'; g.fillRect(0, 0, w, h); g.fillStyle = '#fff'; g.font = 'bold 56px Arial'; g.fillText('EMERGENCY', 60, 260); g.fillText('EYEWASH', 100, 340); }, 0, 1.75, -3.0, true);
 
   // ---------- floor: rubber insulating mats in front of each cabinet row ----------
   const matTex = tex(256, 256, g => { g.fillStyle = '#2f3236'; g.fillRect(0, 0, 256, 256); g.strokeStyle = '#3a3e43'; g.lineWidth = 3; for (let i = 0; i < 256; i += 10) { g.beginPath(); g.moveTo(0, i); g.lineTo(256, i); g.stroke(); } });
@@ -194,7 +209,7 @@ export function buildProps(scene, { backZ = -3.525, leftX = -5.225 } = {}) {
   // tool cart
   const cart = new THREE.Group(); cart.position.set(3.3, 0, 2.6); cart.rotation.y = -.5; G.add(cart);
   [.25, .55, .85].forEach(y => box(.7, .03, .42, M.red, 0, y, 0, cart)); [-.33, .33].forEach(x => [-.19, .19].forEach(z => { box(.025, .85, .025, M.steel, x, .47, z, cart); cyl(.04, .04, .03, M.black, x, .04, z, cart).rotation.z = Math.PI / 2; }));
-  box(.1, .3, .1, std(0xf2c230, .5), -.2, 1.0, 0, cart); box(.26, .06, .14, M.dark, .12, .9, 0, cart); box(.2, .04, .1, std(0x2b5fc2, .5), .15, .6, .05, cart);
+  box(.1, .3, .1, std(0xf2c230, .5), -.2, 1.0, 0, cart); box(.26, .06, .14, M.dark, .12, .9, 0, cart); box(.2, .04, .1, M.slate, .15, .6, .05, cart);
   const meter = rbox(.09, .17, .05, .01, std(0xf2c230, .5), -.1, .9, .1, cart); meter.rotation.x = -1.2;
   // cable drum
   const drum = new THREE.Group(); drum.position.set(4.3, .32, 1.2); drum.rotation.y = .4; G.add(drum);
@@ -206,13 +221,13 @@ export function buildProps(scene, { backZ = -3.525, leftX = -5.225 } = {}) {
   for (let i = 0; i < 4; i++) box(.44, .025, .1, M.steel, 0, .35 + i * .35, .2 - i * .05, lad);
   // traffic cone near the aisle end
   const cone = new THREE.Group(); cone.position.set(3.9, 0, -.4); G.add(cone);
-  box(.3, .03, .3, M.orange, 0, .015, 0, cone); cyl(.02, .12, .45, M.orange, 0, .25, 0, cone); cyl(.07, .09, .07, M.white, 0, .25, 0, cone);
+  box(.3, .03, .3, M.black, 0, .015, 0, cone); cyl(.02, .12, .45, M.yellow, 0, .25, 0, cone); cyl(.07, .09, .07, M.white, 0, .25, 0, cone);
   // cable drops: bundles fall straight from the tray into each cabinet roof gland
   [[-2.2, 1], [1.4, -1]].forEach(([z, dir]) => { for (let i = 0; i < 5; i++) { const x = (-1.9 + i * .84 + (i > 3 ? .45 : 0)) * (dir > 0 ? 1 : -1) + (dir > 0 ? 0 : .5);
-    for (let k = 0; k < 3; k++) { const c = cyl(.012, .012, .62, k === 1 ? M.blue : M.cable, x - .05 + k * .05, 2.43, z); }
+    for (let k = 0; k < 3; k++) { const c = cyl(.012, .012, .62, k === 1 ? M.slate : M.cable, x - .05 + k * .05, 2.43, z); }
     box(.2, .03, .1, M.steel, x, 2.13, z); } });
   // ---------- hanging linear LED fixtures ----------
-  [-2.2, 0, 2.2].forEach(x => { const f = box(1.2, .05, .16, M.white, x, 3.0, -.4); const diff = box(1.16, .01, .12, glow(0xffffff, 1.4), x, 2.97, -.4);
+  const diffM = glow(0xffffff, 1.4); [-2.2, 0, 2.2].forEach(x => { const f = box(1.2, .05, .16, M.white, x, 3.0, -.4); const diff = box(1.16, .01, .12, diffM, x, 2.97, -.4);
     [-.5, .5].forEach(dx => box(.004, .3, .004, M.steel, x + dx, 3.18, -.4)); });
 
   // ---------- dust motes in the light ----------
@@ -221,15 +236,14 @@ export function buildProps(scene, { backZ = -3.525, leftX = -5.225 } = {}) {
   const motes = new THREE.Points(pg, new THREE.PointsMaterial({ color: 0xffffff, size: .018, transparent: true, opacity: .55, depthWrite: false })); G.add(motes);
   anim.push((t, dt) => { const a = pg.attributes.position.array; for (let i = 0; i < N; i++) { a[i * 3 + 1] += Math.sin(t * .3 + i) * .0006; a[i * 3] += Math.cos(t * .2 + i * .7) * .0005; } pg.attributes.position.needsUpdate = true; });
 
-  G.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-  motes.castShadow = false;
-  console.info('[props] merged', mergeStatic(G), 'static meshes');
+  G.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; } }); // small wall props: no shadow pass
+  console.info('[props] merged', mergeStatic(G, { bake: true }), 'static meshes');
   return { group: G, update: (dt, t) => anim.forEach(f => f(t, dt)) };
 }
 
 // =====================================================================================================
-// buildHall: the daylit factory hall around the cutaway control room + the live production line the
-// PLCs drive: infeed case erector -> belt conveyor -> sort-by-height pusher + chute -> 90° turn ->
+// buildHall: the daylit factory hall around the cutaway control room + a decorative production line
+// (not driven by the rig or the PLCs): infeed case erector -> belt conveyor -> sort-by-height pusher + chute -> 90° turn ->
 // robot cell -> palletizer. Building shell is merged per material (no shadows); repeated items are
 // InstancedMesh; only belts, cartons, pusher, robot, palletizer head, forklift and lamps animate.
 // Room footprint (open on +x and +z): x -5.225..5.4, z -3.525..4.8.
@@ -247,9 +261,9 @@ export function buildHall(scene) {
   const sm = u => u * u * (3 - 2 * u);
   const paint = (c, o = {}) => std(c, .55, 0, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, ...o });
   const M = {
-    steel: std(0x8f9ba8, .45, .6), steelLt: std(0xc3c9cf, .4, .7), white: std(0xf1f2f3, .7), dark: std(0x2b2e33, .6, .2),
-    yellow: std(0xf2c230, .5), black: std(0x16171a, .6), orange: std(0xff5a1f, .42, .15), blueRack: std(0x2b5fc2, .45, .3),
-    beam: std(0xff7a1a, .45, .2), wood: std(0xc9a77c, .8), card: std(0xc9a06e, .85), rubber: std(0x1d1f22, .9),
+    steel: std(0x9aa0a6, .45, .6), steelLt: std(0xc3c9cf, .4, .7), white: std(0xf1f2f3, .7), dark: std(0x2b2e33, .6, .2),
+    yellow: std(0xf2c230, .5), black: std(0x16171a, .6), orange: std(0xff5a1f, .42, .15), rackSteel: std(0xd3d7dc, .45, .5),
+    beam: std(0x2b2e33, .5, .3), wood: std(0xc9a77c, .8), card: std(0xc9a06e, .85), rubber: std(0x1d1f22, .9),
     rail: std(0xb9c0c7, .28, .9), cable: std(0x3a3d42, .7), glass: std(0xdfe8ee, .1, .2, { transparent: true, opacity: .35 }),
   };
   const glow = (c, i) => std(c, .4, 0, { emissive: c, emissiveIntensity: i });
@@ -268,7 +282,7 @@ export function buildHall(scene) {
   floor.rotation.x = -Math.PI / 2; floor.position.set((X0 + X1) / 2, 0, (Z0 + Z1) / 2); floor.receiveShadow = true; scene.add(floor);
 
   // ---------- painted markings ----------
-  const P = { yellow: paint(0xf2c230), white: paint(0xf7f7f5), green: paint(0x8fc4a2, { roughness: .6 }) };
+  const P = { yellow: paint(0xf2c230), white: paint(0xf7f7f5), walk: paint(0xeceeef, { roughness: .6 }) };
   const hatchTex = tex(256, 64, (g, w, h) => { g.fillStyle = '#f2c230'; g.fillRect(0, 0, w, h); g.fillStyle = '#16171a'; for (let x = -64; x < w + 64; x += 48) { g.beginPath(); g.moveTo(x, h); g.lineTo(x + 24, h); g.lineTo(x + 24 + h, 0); g.lineTo(x + h, 0); g.fill(); } });
   hatchTex.wrapS = hatchTex.wrapT = THREE.RepeatWrapping;
   const strip = (x0, z0, x1, z1, m) => { const o = new THREE.Mesh(new THREE.PlaneGeometry(Math.abs(x1 - x0), Math.abs(z1 - z0)), m); o.rotation.x = -Math.PI / 2; o.position.set((x0 + x1) / 2, .002, (z0 + z1) / 2); B.add(o); return o; };
@@ -276,7 +290,7 @@ export function buildHall(scene) {
     const o = strip(x0, z0, x1, z1, paint(0xffffff, { map: t })); if (Math.abs(z1 - z0) > Math.abs(x1 - x0)) { o.geometry = new THREE.PlaneGeometry(Math.abs(z1 - z0), Math.abs(x1 - x0)); o.rotation.z = Math.PI / 2; } return o; };
   const lineRect = (x0, z0, x1, z1, w = .1, m = P.yellow) => { strip(x0, z0, x1, z0 + w, m); strip(x0, z1 - w, x1, z1, m); strip(x0, z0, x0 + w, z1, m); strip(x1 - w, z0, x1, z1, m); };
   hatch(5.42, -3.525, 5.72, 4.8); hatch(-5.225, 4.82, 5.72, 5.12); // room curb on the two open sides
-  strip(5.9, -12.5, 6.7, 5.3, P.green); strip(-14.5, 5.3, 6.7, 6.6, P.green); // green walkways hugging the room
+  strip(5.9, -12.5, 6.7, 5.3, P.walk); strip(-14.5, 5.3, 6.7, 6.6, P.walk); // light-grey walkways hugging the room, yellow edges
   strip(5.8, -12.5, 5.9, 5.3, P.yellow); strip(6.7, -12.5, 6.8, 6.7, P.yellow); strip(-14.5, 5.2, 5.9, 5.3, P.yellow); strip(-14.5, 6.6, 6.8, 6.7, P.yellow);
   for (let i = 0; i < 4; i++) strip(5.98 + i * .2, 5.45, 6.08 + i * .2, 6.45, P.white);
   strip(-15, 13.1, 25, 13.22, P.yellow); strip(-15, 16.6, 25, 16.72, P.yellow); // forklift aisle
@@ -290,7 +304,7 @@ export function buildHall(scene) {
   const xs = [-14, -6, 2, 10, 18], zs = [-12, -4.4, 3.6, 12.2, 20.8], cols = [];
   xs.forEach(x => zs.forEach(z => { if (!(x > -5.3 && x < 5.5 && z > -3.6 && z < 4.9)) cols.push([x, z]); }));
   const ibeam = geo([[new THREE.BoxGeometry(.36, HH, .03), 0, HH / 2, -.17], [new THREE.BoxGeometry(.36, HH, .03), 0, HH / 2, .17], [new THREE.BoxGeometry(.025, HH, .32), 0, HH / 2, 0]]);
-  const colIM = new THREE.InstancedMesh(ibeam, std(0x9aa7b4, .45, .55), cols.length);
+  const colIM = new THREE.InstancedMesh(ibeam, std(0xb4b9bf, .45, .55), cols.length);
   const guardIM = new THREE.InstancedMesh(geo([[new THREE.BoxGeometry(.55, 1.1, .55), 0, .55, 0]]), M.yellow, cols.length);
   const stripeIM = new THREE.InstancedMesh(geo([[new THREE.BoxGeometry(.56, .1, .56), 0, .35, 0], [new THREE.BoxGeometry(.56, .1, .56), 0, .75, 0]]), M.black, cols.length);
   cols.forEach(([x, z], i) => { m4.makeTranslation(x, 0, z); colIM.setMatrixAt(i, m4); guardIM.setMatrixAt(i, m4); stripeIM.setMatrixAt(i, m4); });
@@ -304,7 +318,7 @@ export function buildHall(scene) {
   zs.forEach((z, i) => trussIM.setMatrixAt(i, m4.makeTranslation((X0 + X1) / 2, 0, z))); trussIM.computeBoundingSphere(); D.add(trussIM);
   for (let x = X0 + 2; x < X1; x += 3.5) box(.1, .16, Z1 - Z0, M.steelLt, x, 10.75, (Z0 + Z1) / 2);
   const roof = new THREE.Mesh(new THREE.PlaneGeometry(X1 - X0, Z1 - Z0), std(0xe9ebee, .9)); roof.rotation.x = Math.PI / 2; roof.position.set((X0 + X1) / 2, HH, (Z0 + Z1) / 2); B.add(roof);
-  [-10, -2, 6, 14, 22].forEach(x => { const s = new THREE.Mesh(new THREE.PlaneGeometry(1.8, Z1 - Z0 - 4), std(0xffffff, .5, 0, { emissive: 0xf4f8ff, emissiveIntensity: 1.1 })); s.rotation.x = Math.PI / 2; s.position.set(x, HH - .03, (Z0 + Z1) / 2); B.add(s); });
+  const skyM = std(0xffffff, .5, 0, { emissive: 0xf4f8ff, emissiveIntensity: 1.1 }); [-10, -2, 6, 14, 22].forEach(x => { const s = new THREE.Mesh(new THREE.PlaneGeometry(1.8, Z1 - Z0 - 4), skyM); s.rotation.x = Math.PI / 2; s.position.set(x, HH - .03, (Z0 + Z1) / 2); B.add(s); });
   const hb = []; for (let x = -12; x <= 24; x += 6) for (let i = 0; i < zs.length - 1; i++) hb.push([x, (zs[i] + zs[i + 1]) / 2]);
   const bellIM = new THREE.InstancedMesh(geo([[new THREE.CylinderGeometry(.16, .42, .32, 20, 1, true), 0, 8.6, 0], [new THREE.CylinderGeometry(.012, .012, 1.9, 4), 0, 9.7, 0]]), std(0xdfe2e6, .35, .6, { side: THREE.DoubleSide }), hb.length);
   const lensIM = new THREE.InstancedMesh(geo([[new THREE.CircleGeometry(.4, 20), 0, 8.45, 0, Math.PI / 2]]), glow(0xffffff, 2.2), hb.length);
@@ -325,7 +339,7 @@ export function buildHall(scene) {
   const wall = (len, x, z, ry) => { const o = new THREE.Mesh(new THREE.PlaneGeometry(len, HH), wallMat(len)); o.position.set(x, HH / 2, z); o.rotation.y = ry; B.add(o); };
   wall(X1 - X0, (X0 + X1) / 2, Z0, 0); wall(X1 - X0, (X0 + X1) / 2, Z1, Math.PI); wall(Z1 - Z0, X0, (Z0 + Z1) / 2, Math.PI / 2); wall(Z1 - Z0, X1, (Z0 + Z1) / 2, -Math.PI / 2);
   const doorTex = tex(256, 256, g => { g.fillStyle = '#d3d8dd'; g.fillRect(0, 0, 256, 256); for (let y = 0; y < 256; y += 16) { g.fillStyle = 'rgba(255,255,255,.7)'; g.fillRect(0, y, 256, 3); g.fillStyle = 'rgba(90,98,108,.35)'; g.fillRect(0, y + 13, 256, 2); }
-    g.fillStyle = '#9fb3c4'; for (let x = 20; x < 240; x += 56) g.fillRect(x, 120, 40, 12); });
+    g.fillStyle = '#c4ccd3'; for (let x = 20; x < 240; x += 56) g.fillRect(x, 120, 40, 12); });
   const doorM = new THREE.MeshStandardMaterial({ map: doorTex, roughness: .5, metalness: .3 });
   const doorHatch = paint(0xffffff, { map: hatchTex });
   const rollDoor = (x, z, ry) => { const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = ry; B.add(g);
@@ -341,12 +355,12 @@ export function buildHall(scene) {
   [-BW / 2 + .05, BW / 2 - .05].forEach(x => { [-.5, .5].forEach(z => upr.push([new THREE.BoxGeometry(.08, 6.2, .07), x, 3.1, z]));
     for (let y = .4; y < 6; y += 1.2) { upr.push([new THREE.BoxGeometry(.03, .03, 1.0), x, y, 0]); upr.push([new THREE.BoxGeometry(.03, 1.5, .03), x, y + .6, 0, Math.atan2(1, 1.2), 0, 0]); } });
   levels.forEach(y => [-.53, .53].forEach(z => bms.push([new THREE.BoxGeometry(BW - .1, .12, .05), 0, y, z])));
-  const uprIM = new THREE.InstancedMesh(geo(upr), M.blueRack, rk.length), bmIM = new THREE.InstancedMesh(geo(bms), M.beam, rk.length);
+  const uprIM = new THREE.InstancedMesh(geo(upr), M.rackSteel, rk.length), bmIM = new THREE.InstancedMesh(geo(bms), M.beam, rk.length);
   const slots = []; rk.forEach(([x, z, r], i) => { m4.makeRotationY(r).setPosition(x, 0, z); uprIM.setMatrixAt(i, m4); bmIM.setMatrixAt(i, m4);
     [0.06, ...levels.map(y => y + .07)].forEach(y => [-.68, .68].forEach(dx => { if (Math.random() < .86) slots.push([x + Math.cos(r) * dx, y, z - Math.sin(r) * dx, r]); })); });
   const palIM = new THREE.InstancedMesh(geo([[new THREE.BoxGeometry(1.2, .14, 1.0), 0, .07, 0]]), M.wood, slots.length);
   const loadIM = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), std(0xffffff, .75), slots.length);
-  const loadCols = [0xc9a06e, 0xc9a06e, 0xd8b384, 0xeef1f3, 0xe3e7ea, 0x9fb7d6].map(c => new THREE.Color(c));
+  const loadCols = [0xc9a06e, 0xc9a06e, 0xd8b384, 0xeef1f3, 0xe3e7ea, 0xd0d4d8].map(c => new THREE.Color(c));
   slots.forEach(([x, y, z, r], i) => { m4.makeRotationY(r).setPosition(x, y, z); palIM.setMatrixAt(i, m4); const h = rnd(.6, 1.15);
     q.setFromAxisAngle(v.set(0, 1, 0), r); m4.compose(v.set(x, y + .14 + h / 2, z), q, sc.set(rnd(1.0, 1.15), h, rnd(.85, .98))); loadIM.setMatrixAt(i, m4); loadIM.setColorAt(i, loadCols[Math.floor(Math.random() * loadCols.length)]); });
   [uprIM, bmIM, palIM, loadIM].forEach(o => { o.computeBoundingSphere(); D.add(o); });
@@ -361,7 +375,7 @@ export function buildHall(scene) {
     [-len / 2, len / 2].forEach(x => { const r = cyl(.07, .07, .7, M.steelLt, x, BELT_Y - .06, 0, g); r.rotation.x = Math.PI / 2; });
     const t = beltTex.clone(); t.needsUpdate = true; t.repeat.set(len / .25, 1); belts.push(t);
     const belt = new THREE.Mesh(new THREE.PlaneGeometry(len, .66), new THREE.MeshStandardMaterial({ map: t, roughness: .7 })); belt.rotation.x = -Math.PI / 2; belt.position.y = BELT_Y; g.add(belt);
-    box(.26, .22, .22, std(0x2b5fc2, .5, .2), len / 2 - .2, BELT_Y - .2, .5, g); cyl(.09, .09, .3, std(0x2b5fc2, .5, .2), len / 2 - .2, BELT_Y - .2, .75, g).rotation.x = Math.PI / 2;
+    box(.26, .22, .22, M.dark, len / 2 - .2, BELT_Y - .2, .5, g); cyl(.09, .09, .3, M.dark, len / 2 - .2, BELT_Y - .2, .75, g).rotation.x = Math.PI / 2;
     return g;
   }
   const PA = [7.4, -12.2], PB = [7.4, 7.5], PC = [-6.6, 7.5];
@@ -369,13 +383,13 @@ export function buildHall(scene) {
   anim.push((t, dt) => belts.forEach(b => b.offset.x -= dt * .6 / .25));
   // infeed: case erector the cartons come out of
   const ce = new THREE.Group(); ce.position.set(7.4, 0, -12.9); L.add(ce);
-  box(1.6, 1.9, 1.5, M.white, 0, .95, 0, ce); box(1.62, .1, 1.52, M.orange, 0, 1.85, 0, ce); box(.8, .45, .02, M.dark, 0, 1.3, .76, ce);
-  box(.55, .5, .02, M.black, 0, BELT_Y + .2, .76, ce); box(.3, .2, .02, glow(0x9ad1ff, .8), -.55, 1.55, .77, ce);
+  box(1.6, 1.9, 1.5, M.white, 0, .95, 0, ce); box(1.62, .1, 1.52, M.dark, 0, 1.85, 0, ce); box(.8, .45, .02, M.dark, 0, 1.3, .76, ce);
+  box(.55, .5, .02, M.black, 0, BELT_Y + .2, .76, ce); box(.3, .2, .02, glow(0xeaf2f6, .8), -.55, 1.55, .77, ce);
   // sorting station (sort by height): portal with light curtain, pusher, gravity chute, tote
   const SZ = -2;
   const pt = new THREE.Group(); pt.position.set(7.4, 0, SZ); L.add(pt);
   [-.5, .5].forEach(x => box(.08, 1.9, .08, M.steelLt, x, .95, -.3, pt)); box(1.08, .1, .1, M.steelLt, 0, 1.9, -.3, pt);
-  box(.1, .1, .08, M.dark, -.42, 1.25, -.3, pt); box(.1, .1, .08, M.dark, .42, 1.25, -.3, pt); box(.84, .006, .006, glow(0xff3020, 1.6), 0, 1.25, -.3, pt);
+  box(.1, .1, .08, M.dark, -.42, 1.25, -.3, pt); box(.1, .1, .08, M.dark, .42, 1.25, -.3, pt); box(.84, .006, .006, glow(0xff5a1f, 1.6), 0, 1.25, -.3, pt);
   box(.4, .35, .16, M.white, -.75, 1.4, -.3, pt);
   box(.5, .16, .16, M.steelLt, 6.5, BELT_Y + .18, SZ, L);
   const plate = box(.06, .26, .46, M.orange, 6.95, BELT_Y + .15, SZ, D); plate.castShadow = true;
@@ -385,7 +399,7 @@ export function buildHall(scene) {
   for (let i = 0; i < 9; i++) { const r = cyl(.03, .03, .5, M.steelLt, -.8 + i * .2, BELT_Y - .04 - (i * .2) * Math.tan(slope), 0, chute); r.rotation.x = Math.PI / 2; }
   [-.27, .27].forEach(z => { const s = box(1.9, .1, .03, M.steelLt, 0, (BELT_Y + .62) / 2 - .02, z, chute); s.rotation.z = -slope; [-.8, .8].forEach(x => box(.05, .7, .05, M.steel, x, .35, z, chute)); });
   const tote = new THREE.Group(); tote.position.set(10.45, 0, SZ); L.add(tote);
-  box(.9, .1, .8, M.dark, 0, .12, 0, tote); [[0, .45, -.39, .9, .7, .03], [0, .45, .39, .9, .7, .03], [-.44, .45, 0, .03, .7, .8], [.44, .45, 0, .03, .7, .8]].forEach(([x, y, z, w, h, d]) => box(w, h, d, std(0x2b5fc2, .55), x, y, z, tote));
+  box(.9, .1, .8, M.dark, 0, .12, 0, tote); [[0, .45, -.39, .9, .7, .03], [0, .45, .39, .9, .7, .03], [-.44, .45, 0, .03, .7, .8], [.44, .45, 0, .03, .7, .8]].forEach(([x, y, z, w, h, d]) => box(w, h, d, M.cable, x, y, z, tote));
   for (let i = 0; i < 4; i++) box(.4, .55, .35, M.card, -.2 + (i % 2) * .4, .45, -.18 + (i >> 1) * .36, tote);
 
   // ---------- robot cell: 6-axis arm in brand orange, yellow mesh fencing, controller ----------
@@ -402,15 +416,16 @@ export function buildHall(scene) {
   box(.1, .2, .1, M.steelLt, 0, -.12, 0, wr); box(.26, .03, .2, M.dark, 0, -.23, 0, wr);
   const held = box(.4, .3, .35, M.card, 0, -.4, 0, wr);
   robot.traverse(o => { if (o.isMesh) o.castShadow = true; });
-  held.userData.dynamic = true; mergeStatic(wr); wr.userData.dynamic = true; mergeStatic(el); el.userData.dynamic = true; mergeStatic(sh);
-  sh.userData.dynamic = true; mergeStatic(turret); turret.userData.dynamic = true; mergeStatic(robot);
+  const bk = { bake: true }; // one draw (+1 shadow) per robot joint
+  held.userData.dynamic = true; mergeStatic(wr, bk); wr.userData.dynamic = true; mergeStatic(el, bk); el.userData.dynamic = true; mergeStatic(sh, bk);
+  sh.userData.dynamic = true; mergeStatic(turret, bk); turret.userData.dynamic = true; mergeStatic(robot, bk);
   const PICK = [Math.PI / 2, -.9, .76, .14], LIFT1 = [Math.PI / 2, -.5, .95, -.45], LIFT2 = [-.7, -.5, .95, -.45], PLACE = [-.7, -.92, .8, .12];
   const KF = [[0, ...PICK, 0], [.5, ...PICK, 1], [1.3, ...LIFT1, 1], [2.9, ...LIFT2, 1], [3.6, ...PLACE, 1], [4.1, ...PLACE, 0], [4.8, ...LIFT2, 0], [6.4, ...LIFT1, 0], [7.2, ...PICK, 0]];
   anim.push(t => { const c = t % 7.2; let k = 0; while (k < KF.length - 2 && KF[k + 1][0] < c) k++; const A = KF[k], Bk = KF[k + 1], u = sm(Math.min(1, (c - A[0]) / (Bk[0] - A[0]))); const f = j => A[j] + (Bk[j] - A[j]) * u;
     turret.rotation.y = f(1); sh.rotation.z = f(2); el.rotation.z = f(3); wr.rotation.z = f(4); held.visible = A[5] > .5; });
   const op = new THREE.Group(); op.position.set(RB.x + 1.35, 0, RB.z + 1.1); L.add(op); box(1.2, .14, 1.0, M.wood, 0, .07, 0, op);
   for (let i = 0; i < 6; i++) box(.4, .3, .35, M.card, -.4 + (i % 3) * .41, .3, -.19 + (i > 2 ? .38 : 0), op);
-  const ctrl = new THREE.Group(); ctrl.position.set(4.6, 0, 10.6); L.add(ctrl); box(.6, 1.2, .5, std(0xe3e6ea, .45, .2), 0, .6, 0, ctrl); box(.2, .1, .01, glow(0x2fb35a, 1.2), 0, 1.0, -.26, ctrl); box(.5, .4, .02, M.dark, 0, .6, -.26, ctrl);
+  const ctrl = new THREE.Group(); ctrl.position.set(4.6, 0, 10.6); L.add(ctrl); box(.6, 1.2, .5, std(0xe3e6ea, .45, .2), 0, .6, 0, ctrl); box(.2, .1, .01, glow(0xff5a1f, 1.2), 0, 1.0, -.26, ctrl); box(.5, .4, .02, M.dark, 0, .6, -.26, ctrl);
   const meshTex = tex(128, 128, g => { g.clearRect(0, 0, 128, 128); g.strokeStyle = '#e8b81f'; g.lineWidth = 6; for (let i = 0; i <= 128; i += 32) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 128); g.stroke(); g.beginPath(); g.moveTo(0, i); g.lineTo(128, i); g.stroke(); } });
   meshTex.wrapS = meshTex.wrapT = THREE.RepeatWrapping; meshTex.repeat.set(5, 7);
   const meshM = new THREE.MeshStandardMaterial({ map: meshTex, alphaTest: .4, side: THREE.DoubleSide, roughness: .6 });
@@ -426,10 +441,10 @@ export function buildHall(scene) {
   const PZ = new THREE.Vector3(-7.7, 0, 8.8), PICKP = [PC[0] - .25, PC[1]], DROPP = [-7.8, 9.35];
   const pg = new THREE.Group(); pg.position.copy(PZ); L.add(pg);
   [[-1.2, -1.3], [1.2, -1.3], [-1.2, 1.3], [1.2, 1.3]].forEach(([x, z]) => box(.14, 3.0, .14, M.steelLt, x, 1.5, z, pg));
-  [-1.3, 1.3].forEach(z => box(2.54, .18, .14, M.orange, 0, 3.0, z, pg)); [-1.2, 1.2].forEach(x => box(.14, .18, 2.74, M.steelLt, x, 3.0, 0, pg));
+  [-1.3, 1.3].forEach(z => box(2.54, .18, .14, M.dark, 0, 3.0, z, pg)); [-1.2, 1.2].forEach(x => box(.14, .18, 2.74, M.steelLt, x, 3.0, 0, pg));
   box(1.2, .14, 1.0, M.wood, DROPP[0] - PZ.x, .07, DROPP[1] - PZ.z, pg);
   for (let l = 0; l < 3; l++) for (let i = 0; i < 6; i++) if (l < 2 || i < 4) box(.4, .3, .35, M.card, DROPP[0] - PZ.x - .41 + (i % 3) * .41, .3 + l * .31, DROPP[1] - PZ.z - .19 + (i > 2 ? .38 : 0), pg);
-  box(.9, .55, .9, M.white, PICKP[0], BELT_Y + .3, PICKP[1], L); box(.92, .06, .92, M.orange, PICKP[0], BELT_Y + .6, PICKP[1], L);
+  box(.9, .55, .9, M.white, PICKP[0], BELT_Y + .3, PICKP[1], L); box(.92, .06, .92, M.dark, PICKP[0], BELT_Y + .6, PICKP[1], L);
   const bridge = box(2.4, .2, .25, M.dark, PZ.x, 2.95, PZ.z, D), zAx = box(.12, 1.6, .12, M.steelLt, 0, 0, 0, D), head = box(.5, .12, .45, M.orange, 0, 0, 0, D), pBox = box(.4, .3, .35, M.card, 0, 0, 0, D);
   [bridge, zAx, head, pBox].forEach(o => o.castShadow = true);
   anim.push(t => { const c = (t % 6) / 6, u = c < .5 ? sm(c * 2) : sm(2 - c * 2), lift = Math.sin(Math.PI * (c < .5 ? c * 2 : (c - .5) * 2));
@@ -437,7 +452,7 @@ export function buildHall(scene) {
     bridge.position.z = z; zAx.position.set(x, y + .85, z); head.position.set(x, y, z); pBox.position.set(x, y - .21, z); pBox.visible = c < .5; });
 
   // ---------- floor-standing stack lights ----------
-  const sl = { g: glow(0x2fb35a, 2.2), a: glow(0xf2c230, 0), r: glow(0xe0352b, 0), aSort: glow(0xf2c230, 0) };
+  const sl = { g: glow(0xff5a1f, 2.2), a: glow(0xf2c230, 0), r: glow(0xe0352b, 0), aSort: glow(0xf2c230, 0) };
   const stackLight = (x, z, amber = sl.a) => { cyl(.025, .025, 1.9, M.steelLt, x, .95, z, L); cyl(.12, .12, .03, M.dark, x, .015, z, L);
     [[sl.g, 0], [amber, 1], [sl.r, 2]].forEach(([m, i]) => cyl(.05, .05, .09, m, x, 1.95 + i * .095, z, L)); cyl(.05, .05, .03, M.dark, x, 2.24, z, L); };
   stackLight(8.5, -11.7); stackLight(6.55, SZ - .75, sl.aSort); stackLight(4.4, 8.4); stackLight(-5.9, 10.6);
@@ -445,7 +460,7 @@ export function buildHall(scene) {
   // ---------- cable trays: out of the room's ladders, along the line, down to each machine ----------
   function tray(ax, az, bx, bz, y = 2.75) { const len = Math.hypot(bx - ax, bz - az), ry = Math.atan2(-(bz - az), bx - ax), g = new THREE.Group(); g.position.set((ax + bx) / 2, y, (az + bz) / 2); g.rotation.y = ry; B.add(g);
     [-.2, .2].forEach(z => box(len, .06, .03, M.rail, 0, 0, z, g)); for (let x = -len / 2; x < len / 2; x += .4) box(.03, .02, .4, M.rail, x, -.02, 0, g);
-    for (let i = 0; i < 5; i++) { const c = cyl(.017, .017, len, i % 3 ? M.cable : std(0x2b5fc2, .55), 0, .04, -.12 + i * .06, g, 6); c.rotation.z = Math.PI / 2; }
+    for (let i = 0; i < 5; i++) { const c = cyl(.017, .017, len, i % 2 ? M.cable : M.black, 0, .04, -.12 + i * .06, g, 6); c.rotation.z = Math.PI / 2; }
     for (let x = -len / 2 + .3; x < len / 2; x += 2.5) box(.02, .5, .02, M.rail, x, .27, 0, g); } // short drop hangers (long rods cluttered the HOME view)
   tray(5.2, -2.2, 6.3, -2.2); tray(5.2, 1.4, 6.3, 1.4); tray(6.3, -12.4, 6.3, 6.0); tray(6.3, 6.0, -7.7, 6.0); tray(4.6, 6.0, 4.6, 10.6);
   [[6.3, SZ, 1.6], [6.3, -12.2, 1.9], [4.6, 10.6, 1.2], [-7.7, 6.0, 3.1]].forEach(([x, z, top]) => box(.12, 2.75 - top, .05, M.cable, x, (2.75 + top) / 2, z, B));
@@ -458,7 +473,7 @@ export function buildHall(scene) {
   [-.32, .32].forEach(z => box(.08, 2.3, .08, M.steel, .98, 1.15, z, fk)); box(.06, .5, .8, M.dark, 1.05, .45, 0, fk);
   [-.25, .25].forEach(z => box(1.1, .05, .12, M.steel, 1.6, .2, z, fk));
   box(1.2, .14, 1.0, M.wood, 1.65, .3, 0, fk); box(1.1, .8, .95, std(0xeef1f3, .6), 1.65, .78, 0, fk); box(.06, .12, .2, M.orange, -.3, 2.13, 0, fk);
-  fk.traverse(o => { if (o.isMesh) o.castShadow = true; }); mergeStatic(fk);
+  fk.traverse(o => { if (o.isMesh) o.castShadow = true; }); mergeStatic(fk, { bake: true });
   anim.push(t => { const c = (t % 40) / 40, u = c < .45 ? sm(c / .45) : c < .5 ? 1 : c < .95 ? 1 - sm((c - .5) / .45) : 0; fk.position.set(-12 + u * 30, 0, 14.9); });
 
   // staged pallets beside the line
@@ -466,9 +481,10 @@ export function buildHall(scene) {
 
   // ---------- finish: shadows only from line equipment, merge statics ----------
   B.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; } });
-  L.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  L.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; } }); // static line kit: no shadow pass
   D.traverse(o => { if (o.isMesh) o.receiveShadow = true; });
-  const nb = mergeStatic(B), nl = mergeStatic(L);
+  [colIM, guardIM, stripeIM, trussIM, bellIM, lensIM, uprIM, bmIM, palIM, loadIM].forEach(o => { o.castShadow = false; });
+  const nb = mergeStatic(B, { bake: true }), nl = mergeStatic(L, { bake: true });
   B.traverse(o => { if (o.isMesh) o.castShadow = false; });
 
   // ---------- moving cartons (instanced) with sort-by-height diversion ----------
